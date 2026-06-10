@@ -2,8 +2,12 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    api_football_key: str
+    # Legacy provider (kept optional for fallback / reference)
+    api_football_key: str = ""
     api_football_base_url: str = "https://v3.football.api-sports.io"
+    # Primary data provider: football-data.org (free tier covers current season)
+    football_data_key: str = ""
+    football_data_base_url: str = "https://api.football-data.org/v4"
     database_url: str
     app_env: str = "development"
     cors_origins: str = "http://localhost:5173"

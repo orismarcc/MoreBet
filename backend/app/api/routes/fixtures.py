@@ -6,10 +6,9 @@ import httpx
 from app.db.database import get_db
 from app.core.auth import get_current_user
 from app.models.user import User
-from app.services.api_football import (
+from app.services.football_data import (
     SUPPORTED_LEAGUES,
     fetch_upcoming_fixtures,
-    current_season,
 )
 
 router = APIRouter(prefix="/fixtures", tags=["fixtures"])

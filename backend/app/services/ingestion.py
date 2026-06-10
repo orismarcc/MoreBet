@@ -7,17 +7,19 @@ import httpx
 from sqlalchemy.orm import Session
 
 from app.models.orm import League, Team, Match, Player
-from app.services.api_football import (
+from app.services.football_data import (
     SUPPORTED_LEAGUES,
     fetch_league_with_form,
-    fetch_players,
 )
+# Player-level stats (absence modifiers) still come from the legacy provider;
+# this is a secondary feature and off the league-refresh critical path.
+from app.services.api_football import fetch_players
 
 
 async def ingest_league(db: Session, league_id: int) -> League:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        # Single resolver: picks the newest accessible season and computes
-        # each team's averages from their last N matches (recent form).
+        # Current-season data with each team's averages computed from their
+        # last N matches (recent form), via football-data.org.
         league_data, teams_data = await fetch_league_with_form(client, league_id)
         if not league_data or not teams_data:
             raise ValueError(f"League {league_id} not found in API")
@@ -31,23 +33,22 @@ async def ingest_league(db: Session, league_id: int) -> League:
                 setattr(league, k, v)
         db.flush()
 
-        team_map: dict[int, Team] = {}
+        # The provider switch changed team api_ids, so old rows can't be matched
+        # by id. Wipe this league's teams (and their dependents) and re-import a
+        # clean set to avoid stale duplicates.
+        old_ids = [t.id for t in db.query(Team).filter(Team.league_id == league.id).all()]
+        if old_ids:
+            db.query(Player).filter(Player.team_id.in_(old_ids)).delete(synchronize_session=False)
+            db.query(Match).filter(
+                (Match.home_team_id.in_(old_ids)) | (Match.away_team_id.in_(old_ids))
+            ).delete(synchronize_session=False)
+            db.query(Team).filter(Team.league_id == league.id).delete(synchronize_session=False)
+            db.flush()
 
         for td in teams_data:
-            team = (
-                db.query(Team)
-                .filter(Team.api_id == td["api_id"], Team.league_id == league.id)
-                .first()
-            )
-            if not team:
-                team = Team(league_id=league.id, **td)
-                db.add(team)
-            else:
-                for k, v in td.items():
-                    setattr(team, k, v)
-            team.last_updated = datetime.now(timezone.utc)
-            db.flush()
-            team_map[td["api_id"]] = team
+            team = Team(league_id=league.id, last_updated=datetime.now(timezone.utc), **td)
+            db.add(team)
+        db.flush()
 
         _update_league_averages(league, teams_data)
         league.last_updated = datetime.now(timezone.utc)
