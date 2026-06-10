@@ -4,14 +4,39 @@ import type { MatchAnalysis, Team, AbsentPlayer } from './types'
 import { matchesApi } from './lib/api'
 import MatchSelector from './pages/MatchSelector'
 import AnalysisDashboard from './pages/AnalysisDashboard'
+import Login from './pages/Login'
 
 type View = 'selector' | 'dashboard'
 
+function useAuth() {
+  const [token, setToken] = useState(() => localStorage.getItem('morebet_token') ?? '')
+  const [email, setEmail] = useState(() => localStorage.getItem('morebet_email') ?? '')
+
+  function login(t: string, e: string) {
+    localStorage.setItem('morebet_token', t)
+    localStorage.setItem('morebet_email', e)
+    setToken(t)
+    setEmail(e)
+  }
+
+  function logout() {
+    localStorage.removeItem('morebet_token')
+    localStorage.removeItem('morebet_email')
+    setToken('')
+    setEmail('')
+  }
+
+  return { token, email, login, logout }
+}
+
 export default function App() {
+  const { token, email, login, logout } = useAuth()
   const [view, setView] = useState<View>('selector')
   const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  if (!token) return <Login onLogin={login} />
 
   async function handleAnalyse(
     homeTeam: Team,
@@ -34,7 +59,8 @@ export default function App() {
       setView('dashboard')
     } catch (e: unknown) {
       const msg = e && typeof e === 'object' && 'response' in e
-        ? (e as { response?: { data?: { detail?: string } } }).response?.data?.detail ?? 'Erro ao calcular. Verifique se o backend está rodando.'
+        ? (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          ?? 'Erro ao calcular. Verifique se o backend está rodando.'
         : 'Erro ao calcular. Verifique se o backend está rodando.'
       setError(msg)
     } finally {
@@ -44,6 +70,16 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-surface-900">
+      {/* Top bar with user info */}
+      <div className="border-b border-surface-700 bg-surface-800/60 backdrop-blur sticky top-0 z-20">
+        <div className="max-w-2xl mx-auto px-4 py-2 flex items-center justify-between">
+          <span className="text-xs text-surface-400">{email}</span>
+          <button onClick={logout} className="text-xs text-surface-400 hover:text-white transition-colors">
+            Sair
+          </button>
+        </div>
+      </div>
+
       <div className="max-w-2xl mx-auto px-4 pb-12">
         <AnimatePresence mode="wait">
           {view === 'selector' && (

@@ -1,17 +1,37 @@
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db.database import create_tables, SessionLocal
 from app.api.routes import leagues, teams, matches, players
+from app.api.routes import auth as auth_router
+from app.core.auth import get_current_user, hash_password
 from app.services.scheduler import setup_scheduler
+
+
+def _seed_admin(db) -> None:
+    from app.models.user import User
+    existing = db.query(User).filter(User.email == "orismar.bm@gmail.com").first()
+    if not existing:
+        admin = User(
+            email="orismar.bm@gmail.com",
+            hashed_password=hash_password("amor1234"),
+            is_active=True,
+        )
+        db.add(admin)
+        db.commit()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_tables()
+    db = SessionLocal()
+    try:
+        _seed_admin(db)
+    finally:
+        db.close()
     setup_scheduler(SessionLocal)
     yield
 
@@ -31,10 +51,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(leagues.router)
-app.include_router(teams.router)
-app.include_router(matches.router)
-app.include_router(players.router)
+# Auth (public)
+app.include_router(auth_router.router)
+
+# Protected routes — require valid JWT
+protected = {"dependencies": [Depends(get_current_user)]}
+app.include_router(leagues.router, **protected)
+app.include_router(teams.router, **protected)
+app.include_router(matches.router, **protected)
+app.include_router(players.router, **protected)
 
 
 @app.get("/health")

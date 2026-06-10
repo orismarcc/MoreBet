@@ -11,6 +11,34 @@ const api = axios.create({
   timeout: 30_000,
 })
 
+// Inject JWT token on every request
+api.interceptors.request.use(config => {
+  const token = localStorage.getItem('morebet_token')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
+// On 401, clear token and reload to show login
+api.interceptors.response.use(
+  r => r,
+  err => {
+    if (err.response?.status === 401) {
+      localStorage.removeItem('morebet_token')
+      localStorage.removeItem('morebet_email')
+      window.location.reload()
+    }
+    return Promise.reject(err)
+  }
+)
+
+export const authApi = {
+  login: (email: string, password: string) =>
+    api.post<{ access_token: string; token_type: string; email: string }>(
+      '/auth/login', { email, password }
+    ).then(r => r.data),
+  me: () => api.get('/auth/me').then(r => r.data),
+}
+
 export const leaguesApi = {
   list: () => api.get<League[]>('/leagues/').then(r => r.data),
   get: (id: number) => api.get<League>(`/leagues/${id}`).then(r => r.data),
