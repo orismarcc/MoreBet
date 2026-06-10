@@ -11,7 +11,6 @@ from app.services.api_football import (
     SUPPORTED_LEAGUES,
     fetch_league,
     fetch_standings,
-    fetch_fixtures,
     fetch_players,
 )
 
