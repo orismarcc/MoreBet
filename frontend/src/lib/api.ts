@@ -4,8 +4,10 @@ import type {
   CalculateMatchPayload, ValueCheckPayload, ValueCheckResult,
 } from '../types'
 
+const BASE_URL = import.meta.env.VITE_API_URL ?? '/api'
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: BASE_URL,
   timeout: 30_000,
 })
 
