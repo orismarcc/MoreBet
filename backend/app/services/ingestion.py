@@ -9,16 +9,17 @@ from sqlalchemy.orm import Session
 from app.models.orm import League, Team, Match, Player
 from app.services.api_football import (
     SUPPORTED_LEAGUES,
-    fetch_league,
-    fetch_standings,
+    fetch_league_with_form,
     fetch_players,
 )
 
 
 async def ingest_league(db: Session, league_id: int) -> League:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        league_data = await fetch_league(client, league_id)
-        if not league_data:
+        # Single resolver: picks the newest accessible season and computes
+        # each team's averages from their last N matches (recent form).
+        league_data, teams_data = await fetch_league_with_form(client, league_id)
+        if not league_data or not teams_data:
             raise ValueError(f"League {league_id} not found in API")
 
         league = db.query(League).filter(League.api_id == league_id).first()
@@ -30,7 +31,6 @@ async def ingest_league(db: Session, league_id: int) -> League:
                 setattr(league, k, v)
         db.flush()
 
-        teams_data = await fetch_standings(client, league_id)
         team_map: dict[int, Team] = {}
 
         for td in teams_data:

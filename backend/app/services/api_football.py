@@ -34,6 +34,154 @@ def _headers() -> dict[str, str]:
     return {"x-apisports-key": settings.api_football_key}
 
 
+# How many recent matches define a team's "current form"
+FORM_WINDOW = 30
+# Match statuses that count as finished (have a final score)
+_FINISHED = {"FT", "AET", "PEN"}
+# How many seasons back we'll fall back to if the current one is inaccessible
+_MAX_SEASON_FALLBACK = 4
+
+
+def _plan_blocked(data: dict) -> bool:
+    """API-Football returns errors as a dict like {'plan': '...'} when the
+    subscription can't access a season. An empty list means no error."""
+    errors = data.get("errors")
+    if isinstance(errors, dict):
+        return bool(errors)
+    return False
+
+
+async def _get_season_fixtures(
+    client: httpx.AsyncClient, league_id: int, season: int
+) -> tuple[list[dict], dict | None, bool]:
+    """Fetch every fixture for a league+season in a single request.
+    Returns (fixtures, league_obj, plan_blocked)."""
+    r = await client.get(
+        f"{settings.api_football_base_url}/fixtures",
+        headers=_headers(),
+        params={"league": league_id, "season": season},
+    )
+    r.raise_for_status()
+    data = r.json()
+    if _plan_blocked(data):
+        return [], None, True
+    response = data.get("response", [])
+    league_obj = response[0]["league"] if response else None
+    return response, league_obj, False
+
+
+def _team_form_averages(matches: list[dict], last_n: int) -> dict:
+    """From a chronologically-sorted (oldest→newest) list of a team's matches,
+    take the most recent `last_n` and compute home/away scoring averages."""
+    recent = matches[-last_n:]
+    home = [m for m in recent if m["is_home"]]
+    away = [m for m in recent if not m["is_home"]]
+
+    def _avg(games, key):
+        return sum(g[key] for g in games) / len(games) if games else 0.0
+
+    return {
+        "home_played": len(home),
+        "home_goals_scored": _avg(home, "scored"),
+        "home_goals_conceded": _avg(home, "conceded"),
+        "away_played": len(away),
+        "away_goals_scored": _avg(away, "scored"),
+        "away_goals_conceded": _avg(away, "conceded"),
+    }
+
+
+async def fetch_league_with_form(
+    client: httpx.AsyncClient, league_id: int, last_n: int = FORM_WINDOW
+) -> tuple[dict, list[dict]]:
+    """Single source of truth for ingestion.
+
+    Resolves the most recent season the current API plan can actually access
+    (falling back year-by-year), then computes each team's averages from their
+    last `last_n` matches — spanning the previous season when needed so the
+    window reflects genuine recent form rather than a full-season average.
+
+    Returns (league_dict, teams_list) using the same shapes the ORM expects.
+    """
+    target = current_season(league_id)
+
+    # 1. Resolve the newest accessible season for this plan
+    season = None
+    fixtures: list[dict] = []
+    league_obj: dict | None = None
+    for offset in range(_MAX_SEASON_FALLBACK):
+        candidate = target - offset
+        fx, lg, blocked = await _get_season_fixtures(client, league_id, candidate)
+        if blocked:
+            continue  # plan can't reach this season → try an earlier one
+        if fx:
+            season, fixtures, league_obj = candidate, fx, lg
+            break
+    if season is None or league_obj is None:
+        raise ValueError(
+            f"League {league_id}: no accessible season found "
+            f"(tried {target} down to {target - _MAX_SEASON_FALLBACK + 1})"
+        )
+
+    # 2. Pull the previous season too, so a team's last-N window can cross the
+    #    season boundary (best-effort — ignore if the plan blocks it).
+    prev_fx, _, prev_blocked = await _get_season_fixtures(client, league_id, season - 1)
+    if not prev_blocked:
+        fixtures = prev_fx + fixtures
+
+    # 3. Build per-team match histories from finished games
+    finished = [f for f in fixtures if f["fixture"]["status"]["short"] in _FINISHED]
+    finished.sort(key=lambda f: f["fixture"]["date"])
+
+    teams: dict[int, dict] = {}        # api_id -> {name, logo}
+    histories: dict[int, list[dict]] = {}  # api_id -> chronological matches
+
+    for f in finished:
+        gh, ga = f["goals"]["home"], f["goals"]["away"]
+        if gh is None or ga is None:
+            continue
+        h, a = f["teams"]["home"], f["teams"]["away"]
+        teams.setdefault(h["id"], {"name": h["name"], "logo": h["logo"]})
+        teams.setdefault(a["id"], {"name": a["name"], "logo": a["logo"]})
+        histories.setdefault(h["id"], []).append({"is_home": True,  "scored": gh, "conceded": ga})
+        histories.setdefault(a["id"], []).append({"is_home": False, "scored": ga, "conceded": gh})
+
+    # 4. Keep only genuine league participants. Counting matches in the
+    #    resolved season excludes intruders (e.g. a 2nd-division side that
+    #    appears only in a 1-2 leg relegation playoff). A real participant has
+    #    far more games than such intruders, so require at least half of the
+    #    busiest team's match count.
+    season_counts: dict[int, int] = {}
+    for f in finished:
+        if f["league"]["season"] == season:
+            for side in ("home", "away"):
+                tid = f["teams"][side]["id"]
+                season_counts[tid] = season_counts.get(tid, 0) + 1
+    if not season_counts:
+        raise ValueError(f"League {league_id}: no finished matches in season {season}")
+    threshold = max(season_counts.values()) * 0.5
+    current_team_ids = {tid for tid, n in season_counts.items() if n >= threshold}
+
+    teams_list: list[dict] = []
+    for api_id in current_team_ids:
+        info = teams[api_id]
+        averages = _team_form_averages(histories[api_id], last_n)
+        teams_list.append({
+            "api_id": api_id,
+            "name": info["name"],
+            "logo_url": info["logo"],
+            **averages,
+        })
+
+    league_dict = {
+        "api_id": league_obj["id"],
+        "name": league_obj["name"],
+        "country": league_obj["country"],
+        "season": season,
+        "logo_url": league_obj["logo"],
+    }
+    return league_dict, teams_list
+
+
 async def fetch_league(client: httpx.AsyncClient, league_id: int) -> dict:
     season = current_season(league_id)
     r = await client.get(
