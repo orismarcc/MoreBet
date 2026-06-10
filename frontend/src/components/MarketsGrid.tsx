@@ -78,17 +78,17 @@ export default function MarketsGrid({ markets, fairOdds, homeName, awayName }: P
                   initial={{ opacity: 0, x: -10 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.3, delay: (si * 6 + ri) * 0.04 }}
-                  className="flex items-center justify-between py-2 px-3 rounded-lg
+                  className="flex items-center gap-2 py-2 px-3 rounded-lg
                              bg-surface-700/50 hover:bg-surface-700 transition-colors group"
                 >
                   <Tooltip content={row.tooltip}>
                     <span className="text-sm text-surface-300 group-hover:text-white
-                                     transition-colors cursor-help">
+                                     transition-colors cursor-help truncate flex-1 min-w-0">
                       {row.label}
                     </span>
                   </Tooltip>
-                  <div className="flex items-center gap-4">
-                    <div className="w-20 h-1.5 bg-surface-600 rounded-full overflow-hidden">
+                  <div className="flex items-center gap-2 sm:gap-4 flex-shrink-0">
+                    <div className="hidden xs:block w-16 sm:w-20 h-1.5 bg-surface-600 rounded-full overflow-hidden">
                       <motion.div
                         className="h-full bg-brand-500 rounded-full"
                         initial={{ width: 0 }}
@@ -96,10 +96,10 @@ export default function MarketsGrid({ markets, fairOdds, homeName, awayName }: P
                         transition={{ duration: 0.6, delay: (si * 6 + ri) * 0.04 + 0.2 }}
                       />
                     </div>
-                    <span className="text-xs text-surface-400 w-10 text-right font-mono">
+                    <span className="text-xs text-surface-400 w-12 text-right font-mono tabular-nums">
                       {pct(row.prob)}
                     </span>
-                    <span className="text-sm font-bold font-mono text-brand-400 w-12 text-right">
+                    <span className="text-sm font-bold font-mono text-brand-400 w-12 text-right tabular-nums">
                       {odd(row.odds)}
                     </span>
                   </div>

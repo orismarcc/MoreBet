@@ -32,9 +32,9 @@ export default function LambdaDisplay({
           { name: awayName, lambda: lambdaAway, modifier: awayModifier, color: 'bg-red-500' },
         ].map(({ name, lambda, modifier, color }) => (
           <div key={name}>
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-sm text-surface-300">{name}</span>
-              <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between gap-2 mb-1.5">
+              <span className="text-sm text-surface-300 truncate min-w-0">{name}</span>
+              <div className="flex items-center gap-2 flex-shrink-0">
                 {modifier < 1 && (
                   <Tooltip content={`Redução de ${((1 - modifier) * 100).toFixed(0)}% por desfalques`}>
                     <span className="text-xs text-yellow-400 font-mono cursor-help">

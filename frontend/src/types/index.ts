@@ -97,6 +97,43 @@ export interface MatchAnalysis {
   away_team: Team
 }
 
+export interface RecentMatch {
+  match_id: number
+  date: string
+  competition: string | null
+  competition_code: string | null
+  competition_emblem: string | null
+  is_home: boolean
+  opponent: string
+  opponent_short: string | null
+  opponent_crest: string | null
+  goals_for: number
+  goals_against: number
+  result: 'W' | 'D' | 'L'
+}
+
+export interface RecentSummary {
+  played: number
+  wins: number
+  draws: number
+  losses: number
+  goals_for: number
+  goals_against: number
+  avg_goals_for: number
+  avg_goals_against: number
+  over_25_pct: number
+  btts_pct: number
+  clean_sheets: number
+  failed_to_score: number
+  ppg: number
+  form: string
+}
+
+export interface RecentForm {
+  summary: RecentSummary
+  matches: RecentMatch[]
+}
+
 export interface AbsentPlayer {
   player_id: number
   goal_contribution_pct: number

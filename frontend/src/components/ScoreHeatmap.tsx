@@ -79,7 +79,7 @@ export default function ScoreHeatmap({ topScores, homeName, awayName }: Props) {
                     >
                       <Tooltip content={`${h}x${a} — ${(prob * 100).toFixed(2)}%`}>
                         <span
-                          className={`inline-block w-11 h-8 rounded flex items-center justify-center
+                          className={`w-10 sm:w-11 h-8 rounded flex items-center justify-center
                                       font-mono font-semibold cursor-default transition-transform
                                       hover:scale-110 ${isTopScore ? 'ring-1 ring-brand-400' : ''}`}
                           style={{ backgroundColor: probToColor(intensity) }}

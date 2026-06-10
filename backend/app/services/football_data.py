@@ -177,6 +177,94 @@ async def fetch_league_with_form(
     return league_dict, teams_list
 
 
+async def fetch_team_recent_matches(
+    client: httpx.AsyncClient, team_api_id: int, limit: int = 6
+) -> dict:
+    """Recent finished matches for a team (across all competitions) plus an
+    aggregated form summary. `team_api_id` is the football-data.org team id."""
+    r = await client.get(
+        f"{settings.football_data_base_url}/teams/{team_api_id}/matches",
+        headers=_headers(),
+        params={"status": "FINISHED", "limit": max(limit, 1)},
+    )
+    r.raise_for_status()
+    data = r.json()
+
+    raw = [
+        m for m in data.get("matches", [])
+        if m["score"]["fullTime"]["home"] is not None
+        and m["score"]["fullTime"]["away"] is not None
+    ]
+    # Most recent first
+    raw.sort(key=lambda m: m["utcDate"], reverse=True)
+    raw = raw[:limit]
+
+    matches: list[dict] = []
+    wins = draws = losses = gf = ga = 0
+    over_25 = btts = clean_sheets = failed_to_score = 0
+
+    for m in raw:
+        is_home = m["homeTeam"]["id"] == team_api_id
+        opp = m["awayTeam"] if is_home else m["homeTeam"]
+        ft = m["score"]["fullTime"]
+        my_goals = ft["home"] if is_home else ft["away"]
+        opp_goals = ft["away"] if is_home else ft["home"]
+
+        if my_goals > opp_goals:
+            result = "W"; wins += 1
+        elif my_goals == opp_goals:
+            result = "D"; draws += 1
+        else:
+            result = "L"; losses += 1
+
+        gf += my_goals
+        ga += opp_goals
+        if my_goals + opp_goals > 2.5:
+            over_25 += 1
+        if my_goals > 0 and opp_goals > 0:
+            btts += 1
+        if opp_goals == 0:
+            clean_sheets += 1
+        if my_goals == 0:
+            failed_to_score += 1
+
+        comp = m.get("competition", {})
+        matches.append({
+            "match_id": m["id"],
+            "date": m["utcDate"],
+            "competition": comp.get("name"),
+            "competition_code": comp.get("code"),
+            "competition_emblem": comp.get("emblem"),
+            "is_home": is_home,
+            "opponent": opp["name"],
+            "opponent_short": opp.get("tla") or opp.get("shortName"),
+            "opponent_crest": opp.get("crest"),
+            "goals_for": my_goals,
+            "goals_against": opp_goals,
+            "result": result,
+        })
+
+    n = len(matches) or 1
+    summary = {
+        "played": len(matches),
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "goals_for": gf,
+        "goals_against": ga,
+        "avg_goals_for": round(gf / n, 2),
+        "avg_goals_against": round(ga / n, 2),
+        "over_25_pct": round(over_25 / n * 100),
+        "btts_pct": round(btts / n * 100),
+        "clean_sheets": clean_sheets,
+        "failed_to_score": failed_to_score,
+        "ppg": round((wins * 3 + draws) / n, 2),
+        # Oldest→newest so the UI can render a left-to-right form streak
+        "form": "".join(m["result"] for m in reversed(matches)),
+    }
+    return {"summary": summary, "matches": matches}
+
+
 async def fetch_upcoming_fixtures(
     client: httpx.AsyncClient, league_id: int, days: int = 7
 ) -> list[dict]:

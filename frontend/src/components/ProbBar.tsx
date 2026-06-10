@@ -51,10 +51,10 @@ export default function ProbBar({ homeProb, drawProb, awayProb, homeName, awayNa
         </Tooltip>
       </div>
 
-      <div className="flex justify-between mt-2 text-xs text-surface-400">
-        <span>{homeName}</span>
-        <span>Empate</span>
-        <span>{awayName}</span>
+      <div className="flex justify-between gap-2 mt-2 text-xs text-surface-400">
+        <span className="truncate flex-1 min-w-0">{homeName}</span>
+        <span className="flex-shrink-0">Empate</span>
+        <span className="truncate flex-1 min-w-0 text-right">{awayName}</span>
       </div>
     </div>
   )

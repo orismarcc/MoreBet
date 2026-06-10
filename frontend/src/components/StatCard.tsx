@@ -10,6 +10,8 @@ interface Props {
   highlight?: 'green' | 'red' | 'yellow' | 'blue' | 'none'
   delay?: number
   icon?: ReactNode
+  /** Use 'text' for word-y values so they shrink/wrap instead of overflowing. */
+  size?: 'number' | 'text'
 }
 
 const highlightColors = {
@@ -21,31 +23,38 @@ const highlightColors = {
 }
 
 export default function StatCard({
-  label, value, sub, tooltip, highlight = 'none', delay = 0, icon,
+  label, value, sub, tooltip, highlight = 'none', delay = 0, icon, size = 'number',
 }: Props) {
+  const valueClass =
+    size === 'number'
+      ? 'text-2xl sm:text-3xl font-mono font-bold leading-none tabular-nums'
+      : 'text-lg sm:text-xl font-semibold leading-tight break-words'
+
   return (
     <motion.div
       initial={{ opacity: 0, y: 16 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, delay }}
-      className="card flex flex-col gap-1"
+      className="card !p-4 flex flex-col gap-2 min-w-0 h-full"
     >
-      <div className="flex items-center gap-1.5">
-        {icon && <span className="text-surface-400">{icon}</span>}
+      <div className="flex items-start gap-1.5 min-w-0">
+        {icon && <span className="text-surface-400 flex-shrink-0 mt-0.5">{icon}</span>}
         {tooltip ? (
           <Tooltip content={tooltip}>
-            <span className="label cursor-help border-b border-dashed border-surface-500">
+            <span className="label cursor-help border-b border-dashed border-surface-500 leading-snug">
               {label}
             </span>
           </Tooltip>
         ) : (
-          <span className="label">{label}</span>
+          <span className="label leading-snug">{label}</span>
         )}
       </div>
-      <span className={`text-2xl font-bold font-mono ${highlightColors[highlight]}`}>
+
+      <span className={`${valueClass} ${highlightColors[highlight]} min-w-0`}>
         {value}
       </span>
-      {sub && <span className="text-xs text-surface-400">{sub}</span>}
+
+      {sub && <span className="text-xs text-surface-400 leading-snug break-words mt-auto">{sub}</span>}
     </motion.div>
   )
 }

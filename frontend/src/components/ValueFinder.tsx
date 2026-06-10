@@ -116,9 +116,9 @@ export default function ValueFinder({ fairOdds, homeName, awayName }: Props) {
         </div>
       </div>
 
-      <div className="flex items-center gap-3 p-3 bg-surface-700/50 rounded-lg">
+      <div className="flex items-center flex-wrap gap-x-3 gap-y-1 p-3 bg-surface-700/50 rounded-lg">
         <span className="label whitespace-nowrap">Odd Justa Calculada:</span>
-        <span className="text-xl font-bold font-mono text-brand-400">
+        <span className="text-xl font-bold font-mono text-brand-400 tabular-nums">
           {fairOdd.toFixed(3)}
         </span>
         <span className="text-xs text-surface-400">
@@ -161,7 +161,7 @@ export default function ValueFinder({ fairOdds, homeName, awayName }: Props) {
               />
               <div className="flex-1">
                 <p className={`font-semibold text-sm ${evColor}`}>{result.verdict}</p>
-                <div className="flex gap-4 mt-2 text-xs text-surface-400">
+                <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-surface-400">
                   <span>
                     Odd justa: <strong className="text-white font-mono">{result.fair_odds.toFixed(3)}</strong>
                   </span>

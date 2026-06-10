@@ -6,6 +6,7 @@ import LambdaDisplay from '../components/LambdaDisplay'
 import ScoreHeatmap from '../components/ScoreHeatmap'
 import MarketsGrid from '../components/MarketsGrid'
 import ValueFinder from '../components/ValueFinder'
+import RecentForm from '../components/RecentForm'
 import StatCard from '../components/StatCard'
 
 interface Props {
@@ -18,8 +19,14 @@ export default function AnalysisDashboard({ analysis, onBack }: Props) {
 
   const topScore = top_scores[0]
   const combinedLambda = analysis.lambda_home + analysis.lambda_away
-  const bttsLabel = markets.btts_yes > 0.5 ? 'Sim (favorável)' : 'Não (improvável)'
-  const dominance = ((markets.home_win / (1 - markets.draw)) * 100).toFixed(0)
+  const bttsPct = markets.btts_yes * 100
+  const bttsFavoured = markets.btts_yes > 0.5
+  // Quem domina quando há resultado (descontando empate)
+  const resultProb = 1 - markets.draw
+  const homeDom = resultProb > 0 ? (markets.home_win / resultProb) * 100 : 50
+  const favHome = homeDom >= 50
+  const domPct = favHome ? homeDom : 100 - homeDom
+  const favName = favHome ? home.name : away.name
 
   return (
     <motion.div
@@ -31,8 +38,8 @@ export default function AnalysisDashboard({ analysis, onBack }: Props) {
       {/* Header */}
       <div className="sticky top-0 z-10 bg-surface-900/95 backdrop-blur border-b border-surface-700 -mx-4 px-4 py-3">
         <div className="flex items-center gap-3">
-          <button onClick={onBack} className="btn-ghost py-1.5 px-3 flex items-center gap-1.5 text-sm">
-            <ArrowLeft size={16} /> Voltar
+          <button onClick={onBack} className="btn-ghost py-1.5 px-3 flex items-center gap-1.5 text-sm flex-shrink-0">
+            <ArrowLeft size={16} /> <span className="hidden xs:inline">Voltar</span>
           </button>
           <div className="flex items-center gap-2 flex-1 min-w-0">
             <span className="font-semibold text-white truncate">{home.name}</span>
@@ -43,10 +50,10 @@ export default function AnalysisDashboard({ analysis, onBack }: Props) {
       </div>
 
       {/* Resumo rápido */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard
           label="Placar mais provável"
-          value={`${topScore.home}x${topScore.away}`}
+          value={`${topScore.home}×${topScore.away}`}
           sub={`${(topScore.prob * 100).toFixed(1)}% de chance`}
           tooltip="O placar com maior probabilidade individual segundo a matriz de Poisson"
           highlight="green"
@@ -55,27 +62,36 @@ export default function AnalysisDashboard({ analysis, onBack }: Props) {
         <StatCard
           label="Gols esperados (total)"
           value={combinedLambda.toFixed(2)}
-          sub={`${home.name}: ${analysis.lambda_home.toFixed(2)} · ${away.name}: ${analysis.lambda_away.toFixed(2)}`}
-          tooltip="Soma dos lambdas de cada time — indica a expectativa total de gols"
+          sub={`${home.short_name ?? 'Casa'} ${analysis.lambda_home.toFixed(2)} · ${away.short_name ?? 'Fora'} ${analysis.lambda_away.toFixed(2)}`}
+          tooltip="Soma dos lambdas (λ) de cada time — a expectativa total de gols na partida"
           highlight="blue"
           delay={0.05}
         />
         <StatCard
-          label="BTTS (ambos marcam)"
-          value={bttsLabel}
-          sub={`${(markets.btts_yes * 100).toFixed(1)}% de probabilidade`}
+          label="Ambos marcam (BTTS)"
+          value={`${bttsPct.toFixed(0)}%`}
+          sub={bttsFavoured ? 'Provável — tendência de sim' : 'Improvável — tendência de não'}
           tooltip="Probabilidade de ambos os times marcarem ao menos 1 gol"
-          highlight={markets.btts_yes > 0.5 ? 'yellow' : 'none'}
+          highlight={bttsFavoured ? 'yellow' : 'none'}
           delay={0.1}
         />
         <StatCard
           label="Dominância (sem empate)"
-          value={`${dominance}% ${home.name}`}
-          sub={`Quando há resultado, ${home.name} vence ${dominance}% das vezes`}
-          tooltip="Percentual de vitória do mandante desconsiderando a probabilidade de empate"
+          value={`${domPct.toFixed(0)}%`}
+          sub={`${favName} vence quando há resultado`}
+          tooltip="Descontando a chance de empate, com que frequência o favorito vence"
+          highlight={favHome ? 'green' : 'red'}
           delay={0.15}
         />
       </div>
+
+      {/* Forma recente dos dois times */}
+      <RecentForm
+        homeTeamId={home.id}
+        awayTeamId={away.id}
+        homeName={home.name}
+        awayName={away.name}
+      />
 
       {/* Barra de probabilidades */}
       <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>

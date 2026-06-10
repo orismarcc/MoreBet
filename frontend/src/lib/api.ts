@@ -51,6 +51,10 @@ export const teamsApi = {
   get: (id: number) => api.get<Team>(`/teams/${id}`).then(r => r.data),
   players: (teamId: number) =>
     api.get<Player[]>(`/teams/${teamId}/players`).then(r => r.data),
+  recent: (teamId: number, limit = 6) =>
+    api.get<import('../types').RecentForm>(`/teams/${teamId}/recent`, {
+      params: { limit },
+    }).then(r => r.data),
 }
 
 export const matchesApi = {
