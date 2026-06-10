@@ -1,0 +1,126 @@
+export interface League {
+  id: number
+  api_id: number
+  name: string
+  country: string
+  season: number
+  logo_url: string | null
+  home_goals_avg: number | null
+  away_goals_avg: number | null
+  total_matches: number
+}
+
+export interface Team {
+  id: number
+  api_id: number
+  name: string
+  short_name: string | null
+  logo_url: string | null
+  home_goals_scored: number
+  home_goals_conceded: number
+  away_goals_scored: number
+  away_goals_conceded: number
+  home_xg_scored: number | null
+  away_xg_conceded: number | null
+}
+
+export interface Player {
+  id: number
+  name: string
+  position: string | null
+  goals: number
+  assists: number
+  goal_contribution_pct: number
+  sca: number | null
+  xg_assisted: number | null
+  minutes_played: number
+  is_available: boolean
+}
+
+export interface ScoreProb {
+  home: number
+  away: number
+  prob: number
+}
+
+export interface Markets {
+  home_win: number
+  draw: number
+  away_win: number
+  home_or_draw: number
+  away_or_draw: number
+  home_or_away: number
+  over_05: number
+  over_15: number
+  over_25: number
+  over_35: number
+  under_05: number
+  under_15: number
+  under_25: number
+  under_35: number
+  btts_yes: number
+  btts_no: number
+  ah_home_minus_half: number
+  ah_away_minus_half: number
+}
+
+export interface FairOdds {
+  home_win: number
+  draw: number
+  away_win: number
+  home_or_draw: number
+  away_or_draw: number
+  home_or_away: number
+  over_05: number
+  over_15: number
+  over_25: number
+  over_35: number
+  under_05: number
+  under_15: number
+  under_25: number
+  under_35: number
+  btts_yes: number
+  btts_no: number
+  ah_home_minus_half: number
+  ah_away_minus_half: number
+}
+
+export interface MatchAnalysis {
+  lambda_home: number
+  lambda_away: number
+  home_modifier: number
+  away_modifier: number
+  markets: Markets
+  fair_odds: FairOdds
+  top_scores: ScoreProb[]
+  home_team: Team
+  away_team: Team
+}
+
+export interface AbsentPlayer {
+  player_id: number
+  goal_contribution_pct: number
+}
+
+export interface CalculateMatchPayload {
+  home_team_id: number
+  away_team_id: number
+  absent_home: AbsentPlayer[]
+  absent_away: AbsentPlayer[]
+  xg_weight: number
+}
+
+export interface ValueCheckPayload {
+  market: string
+  fair_odds: number
+  bookie_odds: number
+}
+
+export interface ValueCheckResult {
+  market: string
+  fair_odds: number
+  bookie_odds: number
+  ev_pct: number
+  has_value: boolean
+  verdict: string
+}
