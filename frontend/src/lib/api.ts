@@ -60,6 +60,16 @@ export const matchesApi = {
     api.post<ValueCheckResult>('/matches/value', payload).then(r => r.data),
 }
 
+export const fixturesApi = {
+  upcoming: (days: number = 7, leagueIds: number[] = []) =>
+    api.get<import('../types/fixtures').UpcomingFixture[]>('/fixtures/upcoming', {
+      params: {
+        days,
+        league_ids: leagueIds.length ? leagueIds.join(',') : undefined,
+      },
+    }).then(r => r.data),
+}
+
 export const playersApi = {
   updateMetrics: (
     playerId: number,

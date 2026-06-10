@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.db.database import create_tables, SessionLocal
-from app.api.routes import leagues, teams, matches, players
+from app.api.routes import leagues, teams, matches, players, fixtures
 from app.api.routes import auth as auth_router
 from app.core.auth import get_current_user, hash_password
 from app.services.scheduler import setup_scheduler
@@ -60,6 +60,7 @@ app.include_router(leagues.router, **protected)
 app.include_router(teams.router, **protected)
 app.include_router(matches.router, **protected)
 app.include_router(players.router, **protected)
+app.include_router(fixtures.router)
 
 
 @app.get("/health")

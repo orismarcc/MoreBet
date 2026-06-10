@@ -2,6 +2,7 @@
 HTTP client for api-football.com (v3).
 All requests use x-apisports-key header.
 """
+from datetime import date, timedelta
 import httpx
 from app.config import settings
 
@@ -12,9 +13,21 @@ SUPPORTED_LEAGUES = {
     78:  ("Bundesliga", "Germany"),
     61:  ("Ligue 1", "France"),
     71:  ("Brasileiro Série A", "Brazil"),
+    94:  ("Primeira Liga", "Portugal"),
+    88:  ("Eredivisie", "Netherlands"),
 }
 
-CURRENT_SEASON = 2024
+# Leagues that run Jan-Dec (use current calendar year as season)
+CALENDAR_YEAR_LEAGUES = {71, 72, 73}  # Brasileirão A/B/C
+
+
+def current_season(league_id: int) -> int:
+    today = date.today()
+    if league_id in CALENDAR_YEAR_LEAGUES:
+        return today.year
+    # European leagues: season starts in July/August
+    # If we're before July, the current season started last year
+    return today.year if today.month >= 7 else today.year - 1
 
 
 def _headers() -> dict[str, str]:
@@ -22,10 +35,11 @@ def _headers() -> dict[str, str]:
 
 
 async def fetch_league(client: httpx.AsyncClient, league_id: int) -> dict:
+    season = current_season(league_id)
     r = await client.get(
         f"{settings.api_football_base_url}/leagues",
         headers=_headers(),
-        params={"id": league_id, "season": CURRENT_SEASON},
+        params={"id": league_id, "season": season},
     )
     r.raise_for_status()
     data = r.json()
@@ -36,16 +50,17 @@ async def fetch_league(client: httpx.AsyncClient, league_id: int) -> dict:
         "api_id": item["league"]["id"],
         "name": item["league"]["name"],
         "country": item["country"]["name"],
-        "season": CURRENT_SEASON,
+        "season": season,
         "logo_url": item["league"]["logo"],
     }
 
 
 async def fetch_standings(client: httpx.AsyncClient, league_id: int) -> list[dict]:
+    season = current_season(league_id)
     r = await client.get(
         f"{settings.api_football_base_url}/standings",
         headers=_headers(),
-        params={"league": league_id, "season": CURRENT_SEASON},
+        params={"league": league_id, "season": season},
     )
     r.raise_for_status()
     data = r.json()
@@ -71,41 +86,61 @@ async def fetch_standings(client: httpx.AsyncClient, league_id: int) -> list[dic
     return teams
 
 
-async def fetch_fixtures(
-    client: httpx.AsyncClient, league_id: int, season: int = CURRENT_SEASON
+async def fetch_upcoming_fixtures(
+    client: httpx.AsyncClient,
+    league_id: int,
+    days: int = 7,
 ) -> list[dict]:
+    """Fetch upcoming (not yet played) fixtures for the next N days."""
+    today = date.today()
+    date_to = today + timedelta(days=days)
+    season = current_season(league_id)
     r = await client.get(
         f"{settings.api_football_base_url}/fixtures",
         headers=_headers(),
-        params={"league": league_id, "season": season, "status": "FT"},
+        params={
+            "league": league_id,
+            "season": season,
+            "from": today.isoformat(),
+            "to": date_to.isoformat(),
+            "status": "NS-TBD-1H-HT-2H-ET-BT-P",  # Not started + live
+        },
     )
     r.raise_for_status()
     data = r.json()
     fixtures = []
     for f in data.get("response", []):
         fixture = f["fixture"]
-        goals = f["goals"]
-        score = f.get("score", {})
+        home = f["teams"]["home"]
+        away = f["teams"]["away"]
         fixtures.append({
-            "api_id": fixture["id"],
+            "fixture_id": fixture["id"],
             "match_date": fixture["date"],
-            "home_team_api_id": f["teams"]["home"]["id"],
-            "away_team_api_id": f["teams"]["away"]["id"],
-            "home_goals": goals.get("home"),
-            "away_goals": goals.get("away"),
-            "is_finished": True,
+            "status": fixture["status"]["short"],
+            "venue": fixture.get("venue", {}).get("name"),
+            "league_id": f["league"]["id"],
+            "league_name": f["league"]["name"],
+            "league_country": f["league"]["country"],
+            "league_logo": f["league"]["logo"],
+            "round": f["league"].get("round"),
+            "home_team_api_id": home["id"],
+            "home_team_name": home["name"],
+            "home_team_logo": home["logo"],
+            "away_team_api_id": away["id"],
+            "away_team_name": away["name"],
+            "away_team_logo": away["logo"],
         })
-    return fixtures
+    return sorted(fixtures, key=lambda x: x["match_date"])
 
 
 async def fetch_players(
-    client: httpx.AsyncClient, team_id: int
+    client: httpx.AsyncClient, team_id: int, league_id: int = 39
 ) -> list[dict]:
-    """Fetch top players for a team (season stats)."""
+    season = current_season(league_id)
     r = await client.get(
         f"{settings.api_football_base_url}/players",
         headers=_headers(),
-        params={"team": team_id, "season": CURRENT_SEASON},
+        params={"team": team_id, "season": season},
     )
     r.raise_for_status()
     data = r.json()

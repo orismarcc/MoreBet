@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { Search, CalendarDays } from 'lucide-react'
 import type { MatchAnalysis, Team, AbsentPlayer } from './types'
 import { matchesApi } from './lib/api'
 import MatchSelector from './pages/MatchSelector'
 import AnalysisDashboard from './pages/AnalysisDashboard'
+import UpcomingFixtures from './pages/UpcomingFixtures'
 import Login from './pages/Login'
 
+type Tab = 'analyse' | 'fixtures'
 type View = 'selector' | 'dashboard'
 
 function useAuth() {
@@ -31,12 +34,19 @@ function useAuth() {
 
 export default function App() {
   const { token, email, login, logout } = useAuth()
+  const [tab, setTab] = useState<Tab>('analyse')
   const [view, setView] = useState<View>('selector')
   const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   if (!token) return <Login onLogin={login} />
+
+  // Called from UpcomingFixtures with just home+away (no absences, default xg)
+  async function handleQuickAnalyse(homeTeam: Team, awayTeam: Team) {
+    setTab('analyse')
+    await handleAnalyse(homeTeam, awayTeam, [], [], 0.4)
+  }
 
   async function handleAnalyse(
     homeTeam: Team,
@@ -81,8 +91,32 @@ export default function App() {
       </div>
 
       <div className="max-w-2xl mx-auto px-4 pb-12">
+        {/* Tab navigation — hidden when dashboard is open */}
+        {view !== 'dashboard' && (
+          <div className="flex gap-1 mt-4 p-1 bg-surface-800 rounded-xl border border-surface-700">
+            {([
+              { id: 'analyse' as Tab, icon: Search,       label: 'Analisar Jogo'  },
+              { id: 'fixtures' as Tab, icon: CalendarDays, label: 'Próximos Jogos' },
+            ] as const).map(({ id, icon: Icon, label }) => (
+              <button
+                key={id}
+                onClick={() => setTab(id)}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-sm
+                            font-medium transition-all ${
+                  tab === id
+                    ? 'bg-brand-500 text-white shadow-sm'
+                    : 'text-surface-400 hover:text-white'
+                }`}
+              >
+                <Icon size={15} />
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         <AnimatePresence mode="wait">
-          {view === 'selector' && (
+          {tab === 'analyse' && view === 'selector' && (
             <motion.div
               key="selector"
               initial={{ opacity: 0, x: -20 }}
@@ -115,6 +149,18 @@ export default function App() {
                 analysis={analysis}
                 onBack={() => setView('selector')}
               />
+            </motion.div>
+          )}
+
+          {tab === 'fixtures' && view !== 'dashboard' && (
+            <motion.div
+              key="fixtures"
+              initial={{ opacity: 0, x: 20 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: -20 }}
+              transition={{ duration: 0.25 }}
+            >
+              <UpcomingFixtures onAnalyse={handleQuickAnalyse} />
             </motion.div>
           )}
         </AnimatePresence>
