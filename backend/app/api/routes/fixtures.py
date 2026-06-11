@@ -1,7 +1,10 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
+import asyncio
+import logging
+
+import httpx
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-import httpx
 
 from app.db.database import get_db
 from app.core.auth import get_current_user
@@ -10,6 +13,8 @@ from app.services.football_data import (
     SUPPORTED_LEAGUES,
     fetch_upcoming_fixtures,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/fixtures", tags=["fixtures"])
 
@@ -44,31 +49,47 @@ async def upcoming_fixtures(
 ):
     from app.models.orm import Team
 
-    ids_to_fetch = []
     if league_ids:
         requested = [int(x) for x in league_ids.split(",") if x.strip().isdigit()]
         ids_to_fetch = [i for i in requested if i in SUPPORTED_LEAGUES]
     else:
         ids_to_fetch = list(SUPPORTED_LEAGUES.keys())
 
-    all_fixtures: list[dict] = []
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        for league_id in ids_to_fetch:
-            try:
-                fixtures = await fetch_upcoming_fixtures(client, league_id, days)
-                all_fixtures.extend(fixtures)
-            except Exception:
-                continue  # skip leagues that fail (API quota etc.)
+    # Fan-out the league fetches concurrently — capped at 4 in flight so we
+    # don't hammer the rate limit. Each individual call already retries on 429
+    # via the HTTP layer.
+    sem = asyncio.Semaphore(4)
 
-    # Enrich with DB team ids so frontend can trigger analysis directly
-    result = []
-    for f in all_fixtures:
-        home_team = db.query(Team).filter(Team.api_id == f["home_team_api_id"]).first()
-        away_team = db.query(Team).filter(Team.api_id == f["away_team_api_id"]).first()
-        result.append(UpcomingFixture(
+    async def _fetch(client: httpx.AsyncClient, league_id: int) -> list[dict]:
+        async with sem:
+            try:
+                return await fetch_upcoming_fixtures(client, league_id, days)
+            except Exception as exc:
+                logger.warning("upcoming_fixtures(%s) failed: %s", league_id, exc)
+                return []
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        per_league = await asyncio.gather(*(_fetch(client, lid) for lid in ids_to_fetch))
+
+    all_fixtures: list[dict] = [f for batch in per_league for f in batch]
+
+    # Single batched query to map api_id -> internal db id for every team that
+    # appears in any fixture (replaces the previous N+1 pattern).
+    team_api_ids = {f["home_team_api_id"] for f in all_fixtures} | {
+        f["away_team_api_id"] for f in all_fixtures
+    }
+    db_id_by_api_id: dict[int, int] = {}
+    if team_api_ids:
+        rows = db.query(Team.api_id, Team.id).filter(Team.api_id.in_(team_api_ids)).all()
+        db_id_by_api_id = {api_id: db_id for api_id, db_id in rows}
+
+    result = [
+        UpcomingFixture(
             **f,
-            home_db_id=home_team.id if home_team else None,
-            away_db_id=away_team.id if away_team else None,
-        ))
+            home_db_id=db_id_by_api_id.get(f["home_team_api_id"]),
+            away_db_id=db_id_by_api_id.get(f["away_team_api_id"]),
+        )
+        for f in all_fixtures
+    ]
 
     return sorted(result, key=lambda x: x.match_date)
