@@ -50,6 +50,7 @@ async def _get_with_retry(
 # league rows, the frontend league list and the /leagues/{id}/refresh URLs all
 # keep working unchanged after the provider switch.
 FD_LEAGUES: dict[int, tuple[str, str, str]] = {
+    1:   ("WC",  "Copa do Mundo FIFA",  "World"),
     39:  ("PL",  "Premier League",      "England"),
     140: ("PD",  "La Liga",             "Spain"),
     135: ("SA",  "Serie A",             "Italy"),
@@ -59,6 +60,12 @@ FD_LEAGUES: dict[int, tuple[str, str, str]] = {
     94:  ("PPL", "Primeira Liga",       "Portugal"),
     88:  ("DED", "Eredivisie",          "Netherlands"),
 }
+
+# Knockout tournaments on neutral venues: home/away splits are meaningless, so
+# team strength is computed over ALL matches and mirrored into both splits.
+# These also get a previous-edition fallback while the current edition has no
+# finished matches yet (e.g. World Cup group stage about to kick off).
+TOURNAMENT_LEAGUES: set[int] = {1}
 
 # Mirrors the old api_football.SUPPORTED_LEAGUES shape {id: (name, country)} so
 # the rest of the app keeps importing one stable name.
@@ -119,6 +126,23 @@ def _team_form_averages(matches: list[dict], last_n: int) -> dict:
     }
 
 
+def _team_neutral_averages(matches: list[dict], last_n: int) -> dict:
+    """Tournament variant: venues are neutral, so compute one combined
+    scored/conceded average and mirror it into both home and away splits."""
+    recent = matches[-last_n:]
+    n = len(recent)
+    scored = sum(m["scored"] for m in recent) / n if n else 0.0
+    conceded = sum(m["conceded"] for m in recent) / n if n else 0.0
+    return {
+        "home_played": n,
+        "home_goals_scored": scored,
+        "home_goals_conceded": conceded,
+        "away_played": n,
+        "away_goals_scored": scored,
+        "away_goals_conceded": conceded,
+    }
+
+
 async def fetch_league_with_form(
     client: httpx.AsyncClient, league_id: int, last_n: int = FORM_WINDOW
 ) -> tuple[dict, list[dict]]:
@@ -153,42 +177,83 @@ async def fetch_league_with_form(
             and m["score"]["fullTime"]["away"] is not None
         ]
 
+    is_tournament = league_id in TOURNAMENT_LEAGUES
+
     cur_finished = _finished(cur_matches)
-    if not cur_finished:
+    prev_finished = _finished(prev_matches)
+    if not cur_finished and not (is_tournament and prev_finished):
         raise ValueError(
             f"League {league_id} ({code}): no finished matches in the current "
             f"season {season_year} yet"
         )
 
     # Build per-team chronological histories from current + previous seasons.
-    all_finished = _finished(prev_matches) + cur_finished
+    all_finished = prev_finished + cur_finished
     all_finished.sort(key=lambda m: m["utcDate"])
 
     teams: dict[int, dict] = {}
     histories: dict[int, list[dict]] = {}
+    # Tournaments: register team info from EVERY current-edition match (any
+    # status) so participants without a finished match yet still get name/crest.
+    info_source = all_finished + (cur_matches if is_tournament else [])
+    for m in info_source:
+        teams.setdefault(m["homeTeam"]["id"], m["homeTeam"])
+        teams.setdefault(m["awayTeam"]["id"], m["awayTeam"])
     for m in all_finished:
         ft = m["score"]["fullTime"]
         gh, ga = ft["home"], ft["away"]
         h, a = m["homeTeam"], m["awayTeam"]
-        teams.setdefault(h["id"], h)
-        teams.setdefault(a["id"], a)
         histories.setdefault(h["id"], []).append({"is_home": True,  "scored": gh, "conceded": ga})
         histories.setdefault(a["id"], []).append({"is_home": False, "scored": ga, "conceded": gh})
 
-    # Genuine participants of the CURRENT season only. Counting current-season
-    # matches excludes any intruder and ignores prev-season-only teams.
-    season_counts: dict[int, int] = {}
-    for m in cur_finished:
-        for side in ("homeTeam", "awayTeam"):
-            tid = m[side]["id"]
-            season_counts[tid] = season_counts.get(tid, 0) + 1
-    threshold = max(season_counts.values()) * 0.5
-    current_team_ids = {tid for tid, n in season_counts.items() if n >= threshold}
+    if is_tournament:
+        # Every team drawn into the current edition is a genuine participant —
+        # use the full schedule (group games exist before any kick-off).
+        current_team_ids = {
+            m[side]["id"] for m in cur_matches for side in ("homeTeam", "awayTeam")
+        }
+    else:
+        # Genuine participants of the CURRENT season only. Counting current-season
+        # matches excludes any intruder and ignores prev-season-only teams.
+        season_counts: dict[int, int] = {}
+        for m in cur_finished:
+            for side in ("homeTeam", "awayTeam"):
+                tid = m[side]["id"]
+                season_counts[tid] = season_counts.get(tid, 0) + 1
+        threshold = max(season_counts.values()) * 0.5
+        current_team_ids = {tid for tid, n in season_counts.items() if n >= threshold}
+
+    # Tournament fallback for teams with no recorded match in this competition
+    # (e.g. a World Cup debutant): use the field-wide average so λ stays sane
+    # instead of collapsing to zero.
+    with_history = [tid for tid in current_team_ids if histories.get(tid)]
+    fallback: dict | None = None
+    if is_tournament and with_history:
+        per_team = [_team_neutral_averages(histories[tid], last_n) for tid in with_history]
+        k = len(per_team)
+        fallback = {
+            "home_played": 0,
+            "home_goals_scored": sum(t["home_goals_scored"] for t in per_team) / k,
+            "home_goals_conceded": sum(t["home_goals_conceded"] for t in per_team) / k,
+            "away_played": 0,
+            "away_goals_scored": sum(t["away_goals_scored"] for t in per_team) / k,
+            "away_goals_conceded": sum(t["away_goals_conceded"] for t in per_team) / k,
+        }
 
     teams_list: list[dict] = []
     for tid in current_team_ids:
         info = teams[tid]
-        averages = _team_form_averages(histories[tid], last_n)
+        history = histories.get(tid, [])
+        if history:
+            averages = (
+                _team_neutral_averages(history, last_n)
+                if is_tournament
+                else _team_form_averages(history, last_n)
+            )
+        elif fallback is not None:
+            averages = dict(fallback)
+        else:
+            continue  # no usable data for this team
         teams_list.append({
             "api_id": tid,
             "name": info["name"],

@@ -11,6 +11,7 @@ interface Props {
 }
 
 const LEAGUE_OPTIONS = [
+  { id: 1,   name: 'Copa do Mundo',     flag: '🏆' },
   { id: 39,  name: 'Premier League',    flag: '🏴󠁧󠁢󠁥󠁮󠁧󠁿' },
   { id: 140, name: 'La Liga',           flag: '🇪🇸' },
   { id: 135, name: 'Serie A',           flag: '🇮🇹' },
