@@ -69,13 +69,24 @@ def _update_league_averages(league: League, teams_data: list[dict]) -> None:
 
 
 async def ingest_all_leagues(db: Session) -> list[str]:
-    results = []
+    """Refresh every supported league sequentially.
+
+    Sequential (not concurrent) on purpose: the free tier of football-data.org
+    caps at 10 req/min and each league does 2 calls (current + previous
+    season), so the retry/backoff logic in the HTTP layer is what keeps us
+    inside the budget. Concurrency would only force more 429s."""
+    import asyncio
+
+    results: list[str] = []
     for league_id, (name, _) in SUPPORTED_LEAGUES.items():
         try:
             await ingest_league(db, league_id)
             results.append(f"OK: {name}")
         except Exception as e:
             results.append(f"ERROR: {name} — {e}")
+        # Small breather between leagues — keeps us comfortably under 10/min
+        # even when retries kick in.
+        await asyncio.sleep(1.5)
     return results
 
 

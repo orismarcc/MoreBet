@@ -7,11 +7,43 @@ MoreBet leagues *with the current season* — which the previous provider
 
 Auth is via the `X-Auth-Token` header. Free tier allows ~10 requests/minute.
 """
+import asyncio
+import logging
 from datetime import date, timedelta
 
 import httpx
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+# Free tier limit is 10 req/min — leave generous headroom so concurrent
+# refreshes don't trip the limiter.
+_MAX_RETRIES = 4
+_BASE_BACKOFF = 2.0  # seconds; doubles each retry
+
+
+async def _get_with_retry(
+    client: httpx.AsyncClient, url: str, *, params: dict | None = None
+) -> dict:
+    """GET wrapper that retries on 429 / 5xx with exponential backoff and
+    honours the server's Retry-After header when present."""
+    for attempt in range(_MAX_RETRIES):
+        r = await client.get(url, headers=_headers(), params=params or {})
+        if r.status_code < 400:
+            return r.json()
+        # Retry on rate-limit or server errors.
+        if r.status_code in (429, 500, 502, 503, 504) and attempt < _MAX_RETRIES - 1:
+            wait = float(r.headers.get("Retry-After", _BASE_BACKOFF * (2 ** attempt)))
+            logger.warning(
+                "football-data.org %s on %s — retrying in %.1fs (attempt %d/%d)",
+                r.status_code, url, wait, attempt + 1, _MAX_RETRIES,
+            )
+            await asyncio.sleep(wait)
+            continue
+        r.raise_for_status()
+    # Unreachable — raise_for_status above always throws on the last failed attempt.
+    raise RuntimeError(f"unreachable: exhausted retries for {url}")
 
 # Stable API-Football numeric id (kept as the DB / frontend key) -> the
 # football-data.org competition code. Keeping the original ids means existing
@@ -60,13 +92,11 @@ async def _get_matches(
         params["dateFrom"] = date_from
     if date_to:
         params["dateTo"] = date_to
-    r = await client.get(
+    return await _get_with_retry(
+        client,
         f"{settings.football_data_base_url}/competitions/{code}/matches",
-        headers=_headers(),
         params=params,
     )
-    r.raise_for_status()
-    return r.json()
 
 
 def _team_form_averages(matches: list[dict], last_n: int) -> dict:
@@ -182,13 +212,11 @@ async def fetch_team_recent_matches(
 ) -> dict:
     """Recent finished matches for a team (across all competitions) plus an
     aggregated form summary. `team_api_id` is the football-data.org team id."""
-    r = await client.get(
+    data = await _get_with_retry(
+        client,
         f"{settings.football_data_base_url}/teams/{team_api_id}/matches",
-        headers=_headers(),
         params={"status": "FINISHED", "limit": max(limit, 1)},
     )
-    r.raise_for_status()
-    data = r.json()
 
     raw = [
         m for m in data.get("matches", [])
