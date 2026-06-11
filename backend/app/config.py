@@ -37,13 +37,18 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Hard-fail in production if defaults leaked through. Dev gets a warning + a
-# random secret so tokens still work locally.
+# Never run with the leaked default secret. If JWT_SECRET isn't provided we
+# generate a strong random per-process secret instead — secure, but resets on
+# restart (sessions re-login). In production we log loudly so the operator sets
+# a persistent JWT_SECRET; we deliberately do NOT crash, so a missing env var
+# can never take the live site down.
 if settings.jwt_secret == _DEFAULT_JWT_SECRET:
-    if settings.is_production:
-        raise RuntimeError(
-            "JWT_SECRET must be set to a strong random value in production. "
-            "Refusing to start with the default."
-        )
     settings.jwt_secret = secrets.token_urlsafe(48)
-    logger.warning("JWT_SECRET not set — generated a random per-process secret (dev only).")
+    if settings.is_production:
+        logger.error(
+            "JWT_SECRET not set in production — using a random per-process secret. "
+            "Sessions will reset on restart; set JWT_SECRET on the host for "
+            "persistent logins."
+        )
+    else:
+        logger.warning("JWT_SECRET not set — generated a random per-process secret (dev only).")
