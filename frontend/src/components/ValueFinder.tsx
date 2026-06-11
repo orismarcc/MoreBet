@@ -13,22 +13,32 @@ interface Props {
 }
 
 const MARKET_OPTIONS = (home: string, away: string) => [
-  { key: 'home_win',          label: `Vitória ${home}` },
-  { key: 'draw',              label: 'Empate' },
-  { key: 'away_win',          label: `Vitória ${away}` },
-  { key: 'home_or_draw',      label: `${home} ou Empate (1X)` },
-  { key: 'away_or_draw',      label: `${away} ou Empate (X2)` },
-  { key: 'home_or_away',      label: `${home} ou ${away} (12)` },
-  { key: 'over_05',           label: 'Over 0.5 Gols' },
-  { key: 'over_15',           label: 'Over 1.5 Gols' },
-  { key: 'over_25',           label: 'Over 2.5 Gols' },
-  { key: 'over_35',           label: 'Over 3.5 Gols' },
-  { key: 'under_25',          label: 'Under 2.5 Gols' },
-  { key: 'under_35',          label: 'Under 3.5 Gols' },
-  { key: 'btts_yes',          label: 'BTTS Sim' },
-  { key: 'btts_no',           label: 'BTTS Não' },
-  { key: 'ah_home_minus_half', label: `${home} -0.5 AH` },
-  { key: 'ah_away_minus_half', label: `${away} -0.5 AH` },
+  { key: 'home_win',                 label: `Vitória ${home}` },
+  { key: 'draw',                     label: 'Empate' },
+  { key: 'away_win',                 label: `Vitória ${away}` },
+  { key: 'home_or_draw',             label: `${home} ou Empate (1X)` },
+  { key: 'away_or_draw',             label: `${away} ou Empate (X2)` },
+  { key: 'home_or_away',             label: `${home} ou ${away} (12)` },
+  { key: 'over_05',                  label: 'Over 0.5 Gols' },
+  { key: 'over_15',                  label: 'Over 1.5 Gols' },
+  { key: 'over_25',                  label: 'Over 2.5 Gols' },
+  { key: 'over_35',                  label: 'Over 3.5 Gols' },
+  { key: 'over_45',                  label: 'Over 4.5 Gols' },
+  { key: 'under_15',                 label: 'Under 1.5 Gols' },
+  { key: 'under_25',                 label: 'Under 2.5 Gols' },
+  { key: 'under_35',                 label: 'Under 3.5 Gols' },
+  { key: 'btts_yes',                 label: 'BTTS Sim' },
+  { key: 'btts_no',                  label: 'BTTS Não' },
+  { key: 'ah_home_minus_half',       label: `${home} -0.5 AH` },
+  { key: 'ah_home_minus_one_half',   label: `${home} -1.5 AH` },
+  { key: 'ah_home_plus_half',        label: `${home} +0.5 AH` },
+  { key: 'ah_away_minus_half',       label: `${away} -0.5 AH` },
+  { key: 'ah_away_minus_one_half',   label: `${away} -1.5 AH` },
+  { key: 'ah_away_plus_half',        label: `${away} +0.5 AH` },
+  { key: 'btts_and_over_25',         label: 'BTTS Sim + Over 2.5' },
+  { key: 'btts_and_under_25',        label: 'BTTS Sim + Under 2.5' },
+  { key: 'home_and_over_25',         label: `${home} vence + Over 2.5` },
+  { key: 'away_and_over_25',         label: `${away} vence + Over 2.5` },
 ]
 
 export default function ValueFinder({ fairOdds, homeName, awayName }: Props) {
@@ -174,6 +184,21 @@ export default function ValueFinder({ fairOdds, homeName, awayName }: Props) {
                     </strong>
                   </span>
                 </div>
+                {result.has_value && result.kelly_pct > 0 && (
+                  <div className="mt-3 pt-3 border-t border-surface-700/60 text-xs">
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <Tooltip content="Kelly Criterion: fração do bankroll que maximiza o crescimento geométrico no longo prazo. Full Kelly = agressivo. 1/4 Kelly = conservador (recomendado para a maioria).">
+                        <span className="text-surface-400 border-b border-dashed border-surface-500 cursor-help">
+                          Tamanho sugerido (Kelly)
+                        </span>
+                      </Tooltip>
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                      <span>Full Kelly: <strong className="text-white font-mono">{(result.kelly_pct * 100).toFixed(2)}%</strong> do bankroll</span>
+                      <span>1/4 Kelly: <strong className="text-brand-400 font-mono">{(result.quarter_kelly_pct * 100).toFixed(2)}%</strong> (recomendado)</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </motion.div>

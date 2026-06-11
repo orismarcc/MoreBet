@@ -12,16 +12,21 @@ from app.services.scheduler import setup_scheduler
 
 
 def _seed_admin(db) -> None:
+    """Seed the admin user from ADMIN_EMAIL / ADMIN_PASSWORD env vars.
+    Silently skipped if either is missing — no implicit/hardcoded fallback."""
     from app.models.user import User
-    existing = db.query(User).filter(User.email == "orismar.bm@gmail.com").first()
-    if not existing:
-        admin = User(
-            email="orismar.bm@gmail.com",
-            hashed_password=hash_password("amor1234"),
-            is_active=True,
-        )
-        db.add(admin)
-        db.commit()
+
+    email = (settings.admin_email or "").strip().lower()
+    password = settings.admin_password or ""
+    if not email or not password:
+        return
+
+    existing = db.query(User).filter(User.email == email).first()
+    if existing:
+        return
+
+    db.add(User(email=email, hashed_password=hash_password(password), is_active=True))
+    db.commit()
 
 
 @asynccontextmanager

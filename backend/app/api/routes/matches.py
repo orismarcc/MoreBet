@@ -110,5 +110,7 @@ def check_value(payload: ValueCheckIn):
         bookie_odds=result.bookie_odds,
         ev_pct=result.ev_pct,
         has_value=result.has_value,
+        kelly_pct=result.kelly_pct,
+        quarter_kelly_pct=round(result.kelly_pct * 0.25, 4),
         verdict=verdict,
     )

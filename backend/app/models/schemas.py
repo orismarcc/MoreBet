@@ -1,7 +1,10 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
 # ── League ────────────────────────────────────────────────────────────────────
+
 
 class LeagueOut(BaseModel):
     id: int
@@ -13,6 +16,7 @@ class LeagueOut(BaseModel):
     home_goals_avg: float | None
     away_goals_avg: float | None
     total_matches: int
+    last_updated: datetime | None
 
     model_config = {"from_attributes": True}
 
@@ -83,46 +87,55 @@ class ScoreProb(BaseModel):
     prob: float
 
 
-class MarketsOut(BaseModel):
+class _MarketFields(BaseModel):
+    # 1X2
     home_win: float
     draw: float
     away_win: float
+    # Double chance
     home_or_draw: float
     away_or_draw: float
     home_or_away: float
+    # Over/Under
     over_05: float
     over_15: float
     over_25: float
     over_35: float
+    over_45: float
     under_05: float
     under_15: float
     under_25: float
     under_35: float
+    under_45: float
+    # BTTS
     btts_yes: float
     btts_no: float
+    # Asian Handicap
     ah_home_minus_half: float
+    ah_home_minus_one: float
+    ah_home_minus_one_half: float
+    ah_home_plus_half: float
     ah_away_minus_half: float
+    ah_away_minus_one: float
+    ah_away_minus_one_half: float
+    ah_away_plus_half: float
+    # Combined
+    btts_and_over_25: float
+    btts_and_under_25: float
+    home_and_over_25: float
+    away_and_over_25: float
+    # Score ranges
+    score_0_1_goals: float
+    score_2_3_goals: float
+    score_4_plus_goals: float
 
 
-class FairOddsOut(BaseModel):
-    home_win: float
-    draw: float
-    away_win: float
-    home_or_draw: float
-    away_or_draw: float
-    home_or_away: float
-    over_05: float
-    over_15: float
-    over_25: float
-    over_35: float
-    under_05: float
-    under_15: float
-    under_25: float
-    under_35: float
-    btts_yes: float
-    btts_no: float
-    ah_home_minus_half: float
-    ah_away_minus_half: float
+class MarketsOut(_MarketFields):
+    pass
+
+
+class FairOddsOut(_MarketFields):
+    pass
 
 
 class MatchAnalysisOut(BaseModel):
@@ -151,4 +164,6 @@ class ValueCheckOut(BaseModel):
     bookie_odds: float
     ev_pct: float
     has_value: bool
+    kelly_pct: float       # full-Kelly fraction of bankroll (0..1)
+    quarter_kelly_pct: float  # conservative 25%-Kelly suggestion
     verdict: str
