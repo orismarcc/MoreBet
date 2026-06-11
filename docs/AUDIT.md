@@ -66,6 +66,14 @@
 
 ---
 
+## Features adicionadas pós-auditoria
+
+| Item | Status |
+|------|--------|
+| **Copa do Mundo FIFA** (código WC, free tier) — fixtures, refresh e análise com modelo de campo neutro; fallback para edição anterior antes do pontapé inicial; média do campo para estreantes. | ✅ |
+| **Refresh automático a cada 6h** (00/06/12/18 UTC) em vez de 1×/dia. | ✅ |
+| **Bootstrap automático**: deploy novo com banco vazio se popula sozinho no boot. | ✅ |
+
 ## Sugestões de páginas adicionais
 
 - **/league/:id** — visão completa de uma liga (standings + jogos recentes + próximos + leader stats).
