@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Search, CalendarDays } from 'lucide-react'
 import type { MatchAnalysis, Team, AbsentPlayer } from './types'
 import { matchesApi } from './lib/api'
+import { useToast } from './lib/toast'
 import MatchSelector from './pages/MatchSelector'
 import AnalysisDashboard from './pages/AnalysisDashboard'
 import UpcomingFixtures from './pages/UpcomingFixtures'
@@ -34,6 +35,7 @@ function useAuth() {
 
 export default function App() {
   const { token, email, login, logout } = useAuth()
+  const toast = useToast()
   const [tab, setTab] = useState<Tab>('analyse')
   const [view, setView] = useState<View>('selector')
   const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null)
@@ -73,6 +75,7 @@ export default function App() {
           ?? 'Erro ao calcular. Verifique se o backend está rodando.'
         : 'Erro ao calcular. Verifique se o backend está rodando.'
       setError(msg)
+      toast.error(msg)
     } finally {
       setLoading(false)
     }

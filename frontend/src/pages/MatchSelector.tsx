@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 import { ChevronRight, RefreshCw, Swords, Clock, CheckCircle2 } from 'lucide-react'
 import type { League, Team, AbsentPlayer } from '../types'
 import { leaguesApi, teamsApi } from '../lib/api'
+import { useToast } from '../lib/toast'
 import PlayerAbsenceSelector from '../components/PlayerAbsenceSelector'
 import Spinner from '../components/Spinner'
 
@@ -40,6 +41,7 @@ export default function MatchSelector({ onAnalyse, loading }: Props) {
   const [refreshingAll, setRefreshingAll] = useState(false)
   const [refreshAllMsg, setRefreshAllMsg] = useState('')
   const [leaguesError, setLeaguesError] = useState('')
+  const toast = useToast()
 
   useEffect(() => {
     leaguesApi.list()
@@ -61,6 +63,9 @@ export default function MatchSelector({ onAnalyse, loading }: Props) {
       setLeagues(prev => prev.map(l => (l.id === updatedLeague.id ? updatedLeague : l)))
       const updatedTeams = await teamsApi.byLeague(selectedLeague.id)
       setTeams(updatedTeams)
+      toast.success(`${updatedLeague.name} atualizada.`)
+    } catch {
+      toast.error('Falha ao atualizar a liga.')
     } finally {
       setRefreshing(false)
     }
@@ -73,11 +78,12 @@ export default function MatchSelector({ onAnalyse, loading }: Props) {
       const { results } = await leaguesApi.refreshAll()
       const ok = results.filter(r => r.startsWith('OK')).length
       const fail = results.length - ok
-      setRefreshAllMsg(
-        fail === 0
-          ? `Todas as ${ok} ligas atualizadas com sucesso.`
-          : `${ok} ligas atualizadas, ${fail} com erro.`,
-      )
+      const summary = fail === 0
+        ? `Todas as ${ok} ligas atualizadas.`
+        : `${ok} OK · ${fail} com erro.`
+      setRefreshAllMsg(summary)
+      if (fail === 0) toast.success(summary)
+      else toast.info(summary)
       const fresh = await leaguesApi.list()
       setLeagues(fresh)
       if (selectedLeague) {
@@ -85,7 +91,9 @@ export default function MatchSelector({ onAnalyse, loading }: Props) {
         if (updated) setSelectedLeague(updated)
       }
     } catch {
-      setRefreshAllMsg('Falha ao atualizar — verifique a chave do provedor.')
+      const msg = 'Falha ao atualizar — verifique a chave do provedor.'
+      setRefreshAllMsg(msg)
+      toast.error(msg)
     } finally {
       setRefreshingAll(false)
     }
