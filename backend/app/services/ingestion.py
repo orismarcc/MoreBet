@@ -11,9 +11,6 @@ from app.services.football_data import (
     SUPPORTED_LEAGUES,
     fetch_league_with_form,
 )
-# Player-level stats (absence modifiers) still come from the legacy provider;
-# this is a secondary feature and off the league-refresh critical path.
-from app.services.api_football import fetch_players
 
 
 async def ingest_league(db: Session, league_id: int) -> League:
@@ -82,29 +79,8 @@ async def ingest_all_leagues(db: Session) -> list[str]:
     return results
 
 
-async def ingest_players_for_team(db: Session, team: Team) -> None:
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        players_data = await fetch_players(client, team.api_id)
-        total_goals = sum(p["goals"] for p in players_data) or 1
-
-        for pd in players_data:
-            player = (
-                db.query(Player)
-                .filter(Player.api_id == pd["api_id"], Player.team_id == team.id)
-                .first()
-            )
-            contribution = pd["goals"] / total_goals
-            if not player:
-                player = Player(
-                    team_id=team.id,
-                    goal_contribution_pct=contribution,
-                    **pd,
-                )
-                db.add(player)
-            else:
-                for k, v in pd.items():
-                    setattr(player, k, v)
-                player.goal_contribution_pct = contribution
-            player.last_updated = datetime.now(timezone.utc)
-
-        db.commit()
+# NOTE: Player-level ingestion is intentionally not implemented. The previous
+# implementation called API-Football with football-data.org team ids (the two
+# providers have different id spaces), so every request 404ed. Re-implementing
+# this requires either an extra mapping table or switching to a provider that
+# returns squad data keyed by the same ids we already store (e.g. SportMonks).
