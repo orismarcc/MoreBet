@@ -43,6 +43,9 @@ export const leaguesApi = {
   list: () => api.get<League[]>('/leagues/').then(r => r.data),
   get: (id: number) => api.get<League>(`/leagues/${id}`).then(r => r.data),
   refresh: (apiId: number) => api.post<League>(`/leagues/${apiId}/refresh`).then(r => r.data),
+  refreshAll: () =>
+    api.post<{ results: string[] }>('/leagues/refresh-all', undefined, { timeout: 180_000 })
+      .then(r => r.data),
 }
 
 export const teamsApi = {

@@ -1,7 +1,10 @@
+from datetime import datetime
+
 from pydantic import BaseModel, Field
 
 
 # ── League ────────────────────────────────────────────────────────────────────
+
 
 class LeagueOut(BaseModel):
     id: int
@@ -13,6 +16,7 @@ class LeagueOut(BaseModel):
     home_goals_avg: float | None
     away_goals_avg: float | None
     total_matches: int
+    last_updated: datetime | None
 
     model_config = {"from_attributes": True}
 

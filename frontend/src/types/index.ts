@@ -8,6 +8,7 @@ export interface League {
   home_goals_avg: number | null
   away_goals_avg: number | null
   total_matches: number
+  last_updated: string | null
 }
 
 export interface Team {
