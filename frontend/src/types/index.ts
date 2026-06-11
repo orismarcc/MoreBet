@@ -43,47 +43,51 @@ export interface ScoreProb {
   prob: number
 }
 
-export interface Markets {
+export interface MarketSet {
+  // 1X2
   home_win: number
   draw: number
   away_win: number
+  // Double chance
   home_or_draw: number
   away_or_draw: number
   home_or_away: number
+  // Over / Under
   over_05: number
   over_15: number
   over_25: number
   over_35: number
+  over_45: number
   under_05: number
   under_15: number
   under_25: number
   under_35: number
+  under_45: number
+  // BTTS
   btts_yes: number
   btts_no: number
+  // Asian Handicap
   ah_home_minus_half: number
+  ah_home_minus_one: number
+  ah_home_minus_one_half: number
+  ah_home_plus_half: number
   ah_away_minus_half: number
+  ah_away_minus_one: number
+  ah_away_minus_one_half: number
+  ah_away_plus_half: number
+  // Combined
+  btts_and_over_25: number
+  btts_and_under_25: number
+  home_and_over_25: number
+  away_and_over_25: number
+  // Score ranges
+  score_0_1_goals: number
+  score_2_3_goals: number
+  score_4_plus_goals: number
 }
 
-export interface FairOdds {
-  home_win: number
-  draw: number
-  away_win: number
-  home_or_draw: number
-  away_or_draw: number
-  home_or_away: number
-  over_05: number
-  over_15: number
-  over_25: number
-  over_35: number
-  under_05: number
-  under_15: number
-  under_25: number
-  under_35: number
-  btts_yes: number
-  btts_no: number
-  ah_home_minus_half: number
-  ah_away_minus_half: number
-}
+export type Markets = MarketSet
+export type FairOdds = MarketSet
 
 export interface MatchAnalysis {
   lambda_home: number
@@ -159,5 +163,7 @@ export interface ValueCheckResult {
   bookie_odds: number
   ev_pct: number
   has_value: boolean
+  kelly_pct: number
+  quarter_kelly_pct: number
   verdict: string
 }

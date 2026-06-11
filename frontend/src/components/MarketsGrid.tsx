@@ -44,6 +44,8 @@ export default function MarketsGrid({ markets, fairOdds, homeName, awayName }: P
         { label: 'Over 1.5', prob: markets.over_15, odds: fairOdds.over_15, tooltip: 'Ao menos 2 gols na partida' },
         { label: 'Over 2.5', prob: markets.over_25, odds: fairOdds.over_25, tooltip: 'Ao menos 3 gols na partida' },
         { label: 'Over 3.5', prob: markets.over_35, odds: fairOdds.over_35, tooltip: 'Ao menos 4 gols na partida' },
+        { label: 'Over 4.5', prob: markets.over_45, odds: fairOdds.over_45, tooltip: 'Ao menos 5 gols na partida' },
+        { label: 'Under 1.5', prob: markets.under_15, odds: fairOdds.under_15, tooltip: 'Menos de 2 gols na partida' },
         { label: 'Under 2.5', prob: markets.under_25, odds: fairOdds.under_25, tooltip: 'Menos de 3 gols na partida' },
         { label: 'Under 3.5', prob: markets.under_35, odds: fairOdds.under_35, tooltip: 'Menos de 4 gols na partida' },
       ],
@@ -59,7 +61,28 @@ export default function MarketsGrid({ markets, fairOdds, homeName, awayName }: P
       title: 'Asian Handicap',
       rows: [
         { label: `${homeName} -0.5`, prob: markets.ah_home_minus_half, odds: fairOdds.ah_home_minus_half, tooltip: 'Mandante vence por 1 ou mais gols' },
+        { label: `${homeName} -1.5`, prob: markets.ah_home_minus_one_half, odds: fairOdds.ah_home_minus_one_half, tooltip: 'Mandante vence por 2 ou mais gols' },
+        { label: `${homeName} +0.5`, prob: markets.ah_home_plus_half, odds: fairOdds.ah_home_plus_half, tooltip: 'Mandante não perde (vitória ou empate)' },
         { label: `${awayName} -0.5`, prob: markets.ah_away_minus_half, odds: fairOdds.ah_away_minus_half, tooltip: 'Visitante vence por 1 ou mais gols' },
+        { label: `${awayName} -1.5`, prob: markets.ah_away_minus_one_half, odds: fairOdds.ah_away_minus_one_half, tooltip: 'Visitante vence por 2 ou mais gols' },
+        { label: `${awayName} +0.5`, prob: markets.ah_away_plus_half, odds: fairOdds.ah_away_plus_half, tooltip: 'Visitante não perde (vitória ou empate)' },
+      ],
+    },
+    {
+      title: 'Mercados Combinados',
+      rows: [
+        { label: 'BTTS Sim + Over 2.5', prob: markets.btts_and_over_25, odds: fairOdds.btts_and_over_25, tooltip: 'Ambos marcam E mais de 2.5 gols' },
+        { label: 'BTTS Sim + Under 2.5', prob: markets.btts_and_under_25, odds: fairOdds.btts_and_under_25, tooltip: 'Ambos marcam (1-1 típico) E menos de 3 gols' },
+        { label: `${homeName} vence + Over 2.5`, prob: markets.home_and_over_25, odds: fairOdds.home_and_over_25, tooltip: 'Mandante vence E mais de 2.5 gols' },
+        { label: `${awayName} vence + Over 2.5`, prob: markets.away_and_over_25, odds: fairOdds.away_and_over_25, tooltip: 'Visitante vence E mais de 2.5 gols' },
+      ],
+    },
+    {
+      title: 'Faixa de Gols',
+      rows: [
+        { label: '0 ou 1 gols', prob: markets.score_0_1_goals, odds: fairOdds.score_0_1_goals, tooltip: 'Total de 0 ou 1 gol na partida' },
+        { label: '2 ou 3 gols', prob: markets.score_2_3_goals, odds: fairOdds.score_2_3_goals, tooltip: 'Total de exatamente 2 ou 3 gols' },
+        { label: '4 ou mais gols', prob: markets.score_4_plus_goals, odds: fairOdds.score_4_plus_goals, tooltip: 'Total de 4+ gols' },
       ],
     },
   ]
