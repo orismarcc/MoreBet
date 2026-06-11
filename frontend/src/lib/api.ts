@@ -54,9 +54,17 @@ export const teamsApi = {
   get: (id: number) => api.get<Team>(`/teams/${id}`).then(r => r.data),
   players: (teamId: number) =>
     api.get<Player[]>(`/teams/${teamId}/players`).then(r => r.data),
-  recent: (teamId: number, limit = 6) =>
+  recent: (teamId: number, limit = 6, upcoming = false) =>
     api.get<import('../types').RecentForm>(`/teams/${teamId}/recent`, {
-      params: { limit },
+      params: { limit, upcoming },
+    }).then(r => r.data),
+  recentByApiId: (apiId: number, limit = 6, upcoming = false) =>
+    api.get<import('../types').RecentForm>(`/teams/api/${apiId}/recent`, {
+      params: { limit, upcoming },
+    }).then(r => r.data),
+  search: (q: string) =>
+    api.get<import('../types').TeamSearchResult[]>('/teams/search', {
+      params: { q },
     }).then(r => r.data),
 }
 

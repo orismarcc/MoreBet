@@ -27,9 +27,10 @@ function probToIntensity(prob: number, max: number): number {
 }
 
 function probToColor(intensity: number): string {
-  const r = Math.round(15 + intensity * (34 - 15))
-  const g = Math.round(17 + intensity * (197 - 17))
-  const b = Math.round(23 + intensity * (94 - 23))
+  // Interpola do fundo (surface-900) ao azul brand-500
+  const r = Math.round(10 + intensity * (59 - 10))
+  const g = Math.round(14 + intensity * (130 - 14))
+  const b = Math.round(26 + intensity * (246 - 26))
   return `rgba(${r}, ${g}, ${b}, ${0.15 + intensity * 0.85})`
 }
 

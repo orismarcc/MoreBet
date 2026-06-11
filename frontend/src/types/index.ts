@@ -134,9 +134,30 @@ export interface RecentSummary {
   form: string
 }
 
+export interface UpcomingTeamMatch {
+  match_id: number
+  date: string
+  competition: string | null
+  competition_emblem: string | null
+  is_home: boolean
+  opponent: string
+  opponent_crest: string | null
+}
+
 export interface RecentForm {
   summary: RecentSummary
   matches: RecentMatch[]
+  upcoming: UpcomingTeamMatch[]
+}
+
+export interface TeamSearchResult {
+  kind: 'club' | 'national'
+  db_id: number | null
+  api_id: number
+  name: string
+  short_name: string | null
+  crest: string | null
+  context: string
 }
 
 export interface AbsentPlayer {

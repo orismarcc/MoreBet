@@ -7,21 +7,29 @@ export default {
         xs: '420px',
       },
       colors: {
+        // Brand — azure blue
         brand: {
-          50:  '#f0fdf4',
-          100: '#dcfce7',
-          400: '#4ade80',
-          500: '#22c55e',
-          600: '#16a34a',
-          900: '#14532d',
+          50:  '#eff6ff',
+          100: '#dbeafe',
+          200: '#bfdbfe',
+          300: '#93c5fd',
+          400: '#60a5fa',
+          500: '#3b82f6',
+          600: '#2563eb',
+          700: '#1d4ed8',
+          900: '#1e3a8a',
         },
+        // Surfaces — deep blue-tinted dark scale
         surface: {
-          900: '#0f1117',
-          800: '#161b22',
-          700: '#1c2333',
-          600: '#21262d',
-          500: '#30363d',
-          400: '#484f58',
+          900: '#0a0e1a',   // page background
+          800: '#101725',   // cards
+          750: '#141c2e',   // elevated cards / hover
+          700: '#1a2336',   // inputs, inner surfaces
+          600: '#26314a',   // default borders
+          500: '#39476a',   // strong borders / hover borders
+          400: '#8e9ab8',   // muted text
+          300: '#b3bdd6',   // secondary text
+          200: '#d3daeb',   // near-white text
         },
       },
       fontFamily: {
@@ -31,8 +39,7 @@ export default {
       animation: {
         'fade-in': 'fadeIn 0.4s ease-out',
         'slide-up': 'slideUp 0.4s ease-out',
-        'pulse-green': 'pulseGreen 1.5s ease-in-out infinite',
-        'count-up': 'countUp 0.6s ease-out',
+        'pulse-glow': 'pulseGlow 1.5s ease-in-out infinite',
       },
       keyframes: {
         fadeIn: {
@@ -43,9 +50,9 @@ export default {
           '0%': { opacity: '0', transform: 'translateY(20px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },
         },
-        pulseGreen: {
-          '0%, 100%': { boxShadow: '0 0 0 0 rgba(34,197,94,0.4)' },
-          '50%': { boxShadow: '0 0 0 8px rgba(34,197,94,0)' },
+        pulseGlow: {
+          '0%, 100%': { boxShadow: '0 0 0 0 rgba(59,130,246,0.45)' },
+          '50%': { boxShadow: '0 0 0 8px rgba(59,130,246,0)' },
         },
       },
     },

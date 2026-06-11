@@ -105,15 +105,13 @@ export default function MatchSelector({ onAnalyse, loading }: Props) {
     <div className="space-y-5">
       {/* Header */}
       <motion.div
-        initial={{ opacity: 0, y: -20 }}
+        initial={{ opacity: 0, y: -12 }}
         animate={{ opacity: 1, y: 0 }}
-        className="text-center pt-6 pb-2"
+        className="text-center pt-6 pb-1"
       >
-        <h1 className="text-3xl font-bold text-white mb-1">
-          More<span className="text-brand-500">Bet</span>
-        </h1>
+        <h1 className="text-2xl font-bold text-white mb-1">Análise de partida</h1>
         <p className="text-surface-400 text-sm">
-          Precificação avançada de odds · Modelo Poisson + xG
+          Escolha a liga e os times — o modelo Poisson calcula probabilidades e odds justas
         </p>
       </motion.div>
 
@@ -125,7 +123,10 @@ export default function MatchSelector({ onAnalyse, loading }: Props) {
         className="card space-y-3"
       >
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <p className="label">Liga</p>
+          <p className="label flex items-center gap-2">
+            <span className="w-5 h-5 rounded-md bg-brand-500/20 text-brand-300 grid place-items-center text-[11px] font-bold normal-case">1</span>
+            Escolha a liga
+          </p>
           <div className="flex items-center gap-2">
             <button
               onClick={handleRefreshAll}
@@ -230,7 +231,10 @@ export default function MatchSelector({ onAnalyse, loading }: Props) {
           transition={{ delay: 0.15 }}
           className="card space-y-3"
         >
-          <p className="label">Times</p>
+          <p className="label flex items-center gap-2">
+            <span className="w-5 h-5 rounded-md bg-brand-500/20 text-brand-300 grid place-items-center text-[11px] font-bold normal-case">2</span>
+            Defina o confronto
+          </p>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
             <div>
               <label className="text-xs text-surface-400 mb-1 block">Mandante</label>

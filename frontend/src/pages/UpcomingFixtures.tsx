@@ -211,54 +211,54 @@ export default function UpcomingFixtures({ onAnalyse }: Props) {
                   initial={{ opacity: 0, x: -8 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ delay: gi * 0.05 + fi * 0.03 }}
-                  className="card py-3 flex items-center gap-3 hover:border-surface-500 transition-colors"
+                  className="card !py-3 !px-4 flex items-center gap-3 hover:border-surface-500 transition-colors"
                 >
-                  {/* League */}
-                  <div className="w-7 flex-shrink-0 text-center">
+                  {/* Horário + liga */}
+                  <div className="flex flex-col items-center gap-1 w-12 flex-shrink-0">
+                    <span className="text-sm font-mono font-semibold text-white tabular-nums">{time}</span>
                     {f.league_logo
-                      ? <img src={f.league_logo} alt={f.league_name} className="w-6 h-6 object-contain mx-auto" />
-                      : <span className="text-xs text-surface-400">{f.league_name.slice(0, 2)}</span>
+                      ? <img src={f.league_logo} alt={f.league_name} title={f.league_name} className="w-5 h-5 object-contain" />
+                      : <span className="text-[10px] text-surface-400">{f.league_name.slice(0, 3)}</span>
                     }
                   </div>
 
-                  {/* Teams */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2 min-w-0">
-                        {f.home_team_logo && (
-                          <img src={f.home_team_logo} alt={f.home_team_name} className="w-5 h-5 object-contain flex-shrink-0" />
-                        )}
-                        <span className="text-sm font-medium text-white truncate">{f.home_team_name}</span>
-                      </div>
-                      <span className="text-xs text-surface-400 font-mono flex-shrink-0">vs</span>
-                      <div className="flex items-center gap-2 min-w-0 justify-end">
-                        <span className="text-sm font-medium text-white truncate">{f.away_team_name}</span>
-                        {f.away_team_logo && (
-                          <img src={f.away_team_logo} alt={f.away_team_name} className="w-5 h-5 object-contain flex-shrink-0" />
-                        )}
-                      </div>
+                  <div className="w-px self-stretch bg-surface-600/70 flex-shrink-0" />
+
+                  {/* Times empilhados — legível em qualquer largura */}
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {f.home_team_logo && (
+                        <img src={f.home_team_logo} alt="" className="w-5 h-5 object-contain flex-shrink-0" />
+                      )}
+                      <span className="text-sm font-medium text-white truncate">{f.home_team_name}</span>
+                      <span className="text-[10px] text-surface-400 uppercase flex-shrink-0">casa</span>
                     </div>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <span className="text-xs text-surface-400">{time}</span>
-                      {f.round && <span className="text-xs text-surface-500">· {f.round}</span>}
-                      {f.venue && <span className="text-xs text-surface-500 truncate">· {f.venue}</span>}
+                    <div className="flex items-center gap-2 min-w-0">
+                      {f.away_team_logo && (
+                        <img src={f.away_team_logo} alt="" className="w-5 h-5 object-contain flex-shrink-0" />
+                      )}
+                      <span className="text-sm font-medium text-white truncate">{f.away_team_name}</span>
+                      <span className="text-[10px] text-surface-400 uppercase flex-shrink-0">fora</span>
                     </div>
+                    {f.round && (
+                      <p className="text-[11px] text-surface-400 truncate">{f.round}{f.venue ? ` · ${f.venue}` : ''}</p>
+                    )}
                   </div>
 
-                  {/* Analyse button */}
+                  {/* Analisar */}
                   <button
                     onClick={() => handleAnalyse(f)}
                     disabled={!canAnalyse || isLoading}
-                    title={!canAnalyse ? 'Carregue os dados desta liga primeiro' : 'Analisar este jogo'}
-                    className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-1.5 rounded-lg
+                    title={!canAnalyse ? 'Sem dados de força para estes times (ex.: Copa ainda sem jogos finalizados)' : 'Analisar este jogo'}
+                    className={`flex-shrink-0 flex items-center gap-1 px-2.5 py-2 rounded-xl
                                 text-xs font-medium transition-all ${
                       canAnalyse
-                        ? 'bg-brand-500/20 text-brand-400 hover:bg-brand-500/30 border border-brand-500/30'
-                        : 'bg-surface-700 text-surface-500 border border-surface-600 cursor-not-allowed'
+                        ? 'bg-brand-500/20 text-brand-300 hover:bg-brand-500/30 border border-brand-500/30'
+                        : 'bg-surface-700 text-surface-400 border border-surface-600 cursor-not-allowed'
                     }`}
                   >
                     {isLoading ? <Spinner size={12} /> : <ChevronRight size={14} />}
-                    {canAnalyse ? 'Analisar' : 'Sem dados'}
+                    <span className="hidden xs:inline">{canAnalyse ? 'Analisar' : 'Sem dados'}</span>
                   </button>
                 </motion.div>
               )

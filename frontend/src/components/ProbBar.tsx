@@ -1,5 +1,4 @@
 import { motion } from 'framer-motion'
-import Tooltip from './Tooltip'
 
 interface Props {
   homeProb: number
@@ -12,49 +11,49 @@ interface Props {
 export default function ProbBar({ homeProb, drawProb, awayProb, homeName, awayName }: Props) {
   const fmt = (p: number) => `${(p * 100).toFixed(1)}%`
 
+  const segments = [
+    { key: 'home', label: homeName, prob: homeProb, bar: 'bg-brand-500',  dot: 'bg-brand-500',  text: 'text-brand-300' },
+    { key: 'draw', label: 'Empate', prob: drawProb, bar: 'bg-surface-500', dot: 'bg-surface-500', text: 'text-surface-300' },
+    { key: 'away', label: awayName, prob: awayProb, bar: 'bg-red-500',    dot: 'bg-red-500',    text: 'text-red-300' },
+  ]
+
   return (
     <div className="card">
       <p className="label mb-3">Probabilidades 1X2</p>
 
-      <div className="flex items-center gap-1 h-10 rounded-lg overflow-hidden">
-        <Tooltip content={`${homeName}: ${fmt(homeProb)}`}>
+      {/* Barra empilhada — larguras aplicadas direto nos segmentos */}
+      <div className="flex h-9 rounded-lg overflow-hidden gap-px">
+        {segments.map((s, i) => (
           <motion.div
-            className="h-full bg-brand-500 flex items-center justify-center cursor-help"
+            key={s.key}
+            title={`${s.label}: ${fmt(s.prob)}`}
+            className={`h-full ${s.bar} flex items-center justify-center min-w-0`}
             initial={{ width: 0 }}
-            animate={{ width: `${homeProb * 100}%` }}
-            transition={{ duration: 0.8, ease: 'easeOut', delay: 0.1 }}
+            animate={{ width: `${s.prob * 100}%` }}
+            transition={{ duration: 0.7, ease: 'easeOut', delay: 0.1 + i * 0.08 }}
           >
-            <span className="text-xs font-bold text-white px-1 truncate">{fmt(homeProb)}</span>
+            {s.prob >= 0.12 && (
+              <span className={`text-xs font-bold px-1 truncate ${
+                s.key === 'draw' ? 'text-surface-200' : 'text-white'
+              }`}>
+                {fmt(s.prob)}
+              </span>
+            )}
           </motion.div>
-        </Tooltip>
-
-        <Tooltip content={`Empate: ${fmt(drawProb)}`}>
-          <motion.div
-            className="h-full bg-surface-500 flex items-center justify-center cursor-help"
-            initial={{ width: 0 }}
-            animate={{ width: `${drawProb * 100}%` }}
-            transition={{ duration: 0.8, ease: 'easeOut', delay: 0.2 }}
-          >
-            <span className="text-xs font-semibold text-surface-300 px-1">{fmt(drawProb)}</span>
-          </motion.div>
-        </Tooltip>
-
-        <Tooltip content={`${awayName}: ${fmt(awayProb)}`}>
-          <motion.div
-            className="h-full bg-red-500 flex items-center justify-center cursor-help"
-            initial={{ width: 0 }}
-            animate={{ width: `${awayProb * 100}%` }}
-            transition={{ duration: 0.8, ease: 'easeOut', delay: 0.3 }}
-          >
-            <span className="text-xs font-bold text-white px-1 truncate">{fmt(awayProb)}</span>
-          </motion.div>
-        </Tooltip>
+        ))}
       </div>
 
-      <div className="flex justify-between gap-2 mt-2 text-xs text-surface-400">
-        <span className="truncate flex-1 min-w-0">{homeName}</span>
-        <span className="flex-shrink-0">Empate</span>
-        <span className="truncate flex-1 min-w-0 text-right">{awayName}</span>
+      {/* Legenda com valores — garante leitura mesmo em segmentos estreitos */}
+      <div className="grid grid-cols-3 gap-2 mt-3">
+        {segments.map(s => (
+          <div key={s.key} className="flex items-center gap-1.5 min-w-0">
+            <span className={`w-2 h-2 rounded-full flex-shrink-0 ${s.dot}`} />
+            <span className="text-xs text-surface-400 truncate">{s.label}</span>
+            <span className={`text-xs font-mono font-semibold tabular-nums ml-auto ${s.text}`}>
+              {fmt(s.prob)}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   )

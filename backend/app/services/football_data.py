@@ -272,6 +272,41 @@ async def fetch_league_with_form(
     return league_dict, teams_list
 
 
+async def fetch_team_upcoming_matches(
+    client: httpx.AsyncClient, team_api_id: int, limit: int = 5
+) -> list[dict]:
+    """Next scheduled matches for a team within the coming 60 days."""
+    today = date.today()
+    data = await _get_with_retry(
+        client,
+        f"{settings.football_data_base_url}/teams/{team_api_id}/matches",
+        params={
+            "dateFrom": today.isoformat(),
+            "dateTo": (today + timedelta(days=60)).isoformat(),
+            "limit": 20,
+        },
+    )
+    upcoming: list[dict] = []
+    for m in sorted(data.get("matches", []), key=lambda x: x["utcDate"]):
+        if m["status"] not in ("SCHEDULED", "TIMED"):
+            continue
+        is_home = m["homeTeam"]["id"] == team_api_id
+        opp = m["awayTeam"] if is_home else m["homeTeam"]
+        comp = m.get("competition", {})
+        upcoming.append({
+            "match_id": m["id"],
+            "date": m["utcDate"],
+            "competition": comp.get("name"),
+            "competition_emblem": comp.get("emblem"),
+            "is_home": is_home,
+            "opponent": opp["name"],
+            "opponent_crest": opp.get("crest"),
+        })
+        if len(upcoming) >= limit:
+            break
+    return upcoming
+
+
 async def fetch_team_recent_matches(
     client: httpx.AsyncClient, team_api_id: int, limit: int = 6
 ) -> dict:
@@ -396,3 +431,39 @@ async def fetch_upcoming_fixtures(
             "away_team_logo": a.get("crest"),
         })
     return sorted(fixtures, key=lambda x: x["match_date"])
+
+
+# ── World Cup participants (national teams) ─────────────────────────────────
+# National teams have no row in our DB while the tournament has no finished
+# matches, but they DO exist in the current edition's schedule. We extract them
+# from the WC fixtures and cache the list in-process so the team-search
+# endpoint doesn't burn an API call per keystroke.
+_WC_CACHE_TTL = 6 * 3600.0
+_wc_participants_cache: dict = {"ts": 0.0, "teams": []}
+
+
+async def fetch_wc_participants(client: httpx.AsyncClient) -> list[dict]:
+    """All national teams drawn into the current World Cup edition.
+    Returns [{api_id, name, short_name, crest}], cached for 6h."""
+    import time
+
+    now = time.monotonic()
+    if _wc_participants_cache["teams"] and now - _wc_participants_cache["ts"] < _WC_CACHE_TTL:
+        return _wc_participants_cache["teams"]
+
+    data = await _get_matches(client, "WC")
+    seen: dict[int, dict] = {}
+    for m in data.get("matches", []):
+        for side in ("homeTeam", "awayTeam"):
+            t = m[side]
+            if t.get("id") and t["id"] not in seen:
+                seen[t["id"]] = {
+                    "api_id": t["id"],
+                    "name": t["name"],
+                    "short_name": t.get("tla") or t.get("shortName"),
+                    "crest": t.get("crest"),
+                }
+    teams = sorted(seen.values(), key=lambda t: t["name"])
+    _wc_participants_cache["ts"] = now
+    _wc_participants_cache["teams"] = teams
+    return teams

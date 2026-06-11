@@ -35,16 +35,18 @@ export default function AnalysisDashboard({ analysis, onBack }: Props) {
       transition={{ duration: 0.3 }}
       className="space-y-5"
     >
-      {/* Header */}
-      <div className="sticky top-0 z-10 bg-surface-900/95 backdrop-blur border-b border-surface-700 -mx-4 px-4 py-3">
-        <div className="flex items-center gap-3">
+      {/* Header da análise — fica abaixo do header global (h-14) */}
+      <div className="sticky top-14 z-20 bg-surface-900/95 backdrop-blur border-b border-surface-600/60 -mx-4 sm:-mx-6 px-4 sm:px-6 py-3">
+        <div className="flex items-center gap-3 max-w-5xl mx-auto">
           <button onClick={onBack} className="btn-ghost py-1.5 px-3 flex items-center gap-1.5 text-sm flex-shrink-0">
             <ArrowLeft size={16} /> <span className="hidden xs:inline">Voltar</span>
           </button>
-          <div className="flex items-center gap-2 flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-1 min-w-0 justify-center sm:justify-start">
+            {home.logo_url && <img src={home.logo_url} alt="" className="w-6 h-6 object-contain flex-shrink-0" />}
             <span className="font-semibold text-white truncate">{home.name}</span>
-            <Swords size={14} className="text-brand-500 flex-shrink-0" />
+            <Swords size={14} className="text-brand-400 flex-shrink-0" />
             <span className="font-semibold text-white truncate">{away.name}</span>
+            {away.logo_url && <img src={away.logo_url} alt="" className="w-6 h-6 object-contain flex-shrink-0" />}
           </div>
         </div>
       </div>
@@ -85,6 +87,40 @@ export default function AnalysisDashboard({ analysis, onBack }: Props) {
         />
       </div>
 
+      {/* Probabilidades + λ | Heatmap — lado a lado no desktop */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.2 }}
+          className="space-y-5"
+        >
+          <ProbBar
+            homeProb={markets.home_win}
+            drawProb={markets.draw}
+            awayProb={markets.away_win}
+            homeName={home.name}
+            awayName={away.name}
+          />
+          <LambdaDisplay
+            lambdaHome={analysis.lambda_home}
+            lambdaAway={analysis.lambda_away}
+            homeName={home.name}
+            awayName={away.name}
+            homeModifier={analysis.home_modifier}
+            awayModifier={analysis.away_modifier}
+          />
+        </motion.div>
+
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
+          <ScoreHeatmap
+            topScores={top_scores}
+            homeName={home.name}
+            awayName={away.name}
+          />
+        </motion.div>
+      </div>
+
       {/* Forma recente dos dois times */}
       <RecentForm
         homeTeamId={home.id}
@@ -93,56 +129,35 @@ export default function AnalysisDashboard({ analysis, onBack }: Props) {
         awayName={away.name}
       />
 
-      {/* Barra de probabilidades */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
-        <ProbBar
-          homeProb={markets.home_win}
-          drawProb={markets.draw}
-          awayProb={markets.away_win}
-          homeName={home.name}
-          awayName={away.name}
-        />
-      </motion.div>
+      {/* Value Finder | Mercados — lado a lado no desktop */}
+      <div className="grid grid-cols-1 lg:grid-cols-5 gap-5 items-start">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3 }}
+          className="lg:col-span-2 lg:sticky lg:top-[120px]"
+        >
+          <ValueFinder
+            fairOdds={fair_odds}
+            homeName={home.name}
+            awayName={away.name}
+          />
+        </motion.div>
 
-      {/* Lambda */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}>
-        <LambdaDisplay
-          lambdaHome={analysis.lambda_home}
-          lambdaAway={analysis.lambda_away}
-          homeName={home.name}
-          awayName={away.name}
-          homeModifier={analysis.home_modifier}
-          awayModifier={analysis.away_modifier}
-        />
-      </motion.div>
-
-      {/* Heatmap */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}>
-        <ScoreHeatmap
-          topScores={top_scores}
-          homeName={home.name}
-          awayName={away.name}
-        />
-      </motion.div>
-
-      {/* Value Finder */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.35 }}>
-        <ValueFinder
-          fairOdds={fair_odds}
-          homeName={home.name}
-          awayName={away.name}
-        />
-      </motion.div>
-
-      {/* Todos os mercados */}
-      <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.4 }}>
-        <MarketsGrid
-          markets={markets}
-          fairOdds={fair_odds}
-          homeName={home.name}
-          awayName={away.name}
-        />
-      </motion.div>
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.35 }}
+          className="lg:col-span-3"
+        >
+          <MarketsGrid
+            markets={markets}
+            fairOdds={fair_odds}
+            homeName={home.name}
+            awayName={away.name}
+          />
+        </motion.div>
+      </div>
     </motion.div>
   )
 }

@@ -158,7 +158,7 @@ export default function ValueFinder({ fairOdds, homeName, awayName }: Props) {
             transition={{ duration: 0.35 }}
             className={`rounded-xl border p-4 ${
               result.ev_pct > 5
-                ? 'border-brand-500/50 bg-brand-500/10 animate-pulse-green'
+                ? 'border-brand-500/50 bg-brand-500/10 animate-pulse-glow'
                 : result.ev_pct > 0
                 ? 'border-yellow-500/40 bg-yellow-500/5'
                 : 'border-red-500/30 bg-red-500/5'
