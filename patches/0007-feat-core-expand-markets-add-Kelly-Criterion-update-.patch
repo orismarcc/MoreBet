@@ -1,0 +1,559 @@
+From 6ffc9c97f3d590c8928ab55a3a8a3de6016b4976 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Wed, 10 Jun 2026 10:00:32 +0000
+Subject: [PATCH 7/9] feat(core): expand markets, add Kelly Criterion, update
+ UI
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Backend
+- markets.py: add Over/Under 1.5 and 4.5, full Asian Handicap ladder
+  (home/away -0.5, -1, -1.5, +0.5), combined markets (BTTS+Over/Under 2.5,
+  Result+Over 2.5) and Total Goals ranges (0-1, 2-3, 4+).
+- odds.py: add Kelly Criterion fraction to ValueResult — full Kelly is
+  returned, frontend can apply fractional sizing.
+- schemas.py: refactor MarketsOut / FairOddsOut to share a _MarketFields
+  base so adding a market only takes one edit per layer.
+- routes/matches.py: surface kelly_pct + quarter_kelly_pct in the value
+  response.
+
+Frontend
+- types/index.ts: MarketSet shared between Markets and FairOdds.
+- MarketsGrid: render the new markets in dedicated sections.
+- ValueFinder: dropdown covers the new markets; the result card now shows
+  full-Kelly and 1/4-Kelly stake sizing whenever EV is positive.
+
+All 41 backend tests still pass.
+---
+ backend/app/api/routes/matches.py       |  2 +
+ backend/app/core/markets.py             | 73 ++++++++++++++++++++++---
+ backend/app/core/odds.py                | 52 +++++++++++-------
+ backend/app/models/schemas.py           | 51 ++++++++++-------
+ frontend/src/components/MarketsGrid.tsx | 23 ++++++++
+ frontend/src/components/ValueFinder.tsx | 57 +++++++++++++------
+ frontend/src/types/index.ts             | 48 +++++++++-------
+ 7 files changed, 222 insertions(+), 84 deletions(-)
+
+diff --git a/backend/app/api/routes/matches.py b/backend/app/api/routes/matches.py
+index c5be565..d3af633 100644
+--- a/backend/app/api/routes/matches.py
++++ b/backend/app/api/routes/matches.py
+@@ -110,5 +110,7 @@ def check_value(payload: ValueCheckIn):
+         bookie_odds=result.bookie_odds,
+         ev_pct=result.ev_pct,
+         has_value=result.has_value,
++        kelly_pct=result.kelly_pct,
++        quarter_kelly_pct=round(result.kelly_pct * 0.25, 4),
+         verdict=verdict,
+     )
+diff --git a/backend/app/core/markets.py b/backend/app/core/markets.py
+index acf01c6..c7f0f66 100644
+--- a/backend/app/core/markets.py
++++ b/backend/app/core/markets.py
+@@ -18,37 +18,79 @@ class MatchMarkets:
+     over_15: float
+     over_25: float
+     over_35: float
++    over_45: float
+     under_05: float
+     under_15: float
+     under_25: float
+     under_35: float
++    under_45: float
+     # BTTS
+     btts_yes: float
+     btts_no: float
+-    # Asian Handicap ±0.5
+-    ah_home_minus_half: float  # home wins by 1+
+-    ah_away_minus_half: float  # away wins by 1+
++    # Asian Handicap — home line
++    ah_home_minus_half: float    # home wins by 1+
++    ah_home_minus_one: float     # home wins by 2+ (full -1 line, push refunded)
++    ah_home_minus_one_half: float  # home wins by 2+
++    ah_home_plus_half: float     # home doesn't lose
++    # Asian Handicap — away line
++    ah_away_minus_half: float    # away wins by 1+
++    ah_away_minus_one: float     # away wins by 2+
++    ah_away_minus_one_half: float
++    ah_away_plus_half: float     # away doesn't lose
++    # Combined markets
++    btts_and_over_25: float
++    btts_and_under_25: float
++    home_and_over_25: float
++    away_and_over_25: float
++    # Correct score ranges
++    score_0_1_goals: float       # 0 or 1 goal total
++    score_2_3_goals: float       # exactly 2 or 3 goals total
++    score_4_plus_goals: float    # 4 or more goals total
+ 
+ 
+ def calc_markets(matrix: ScoreMatrix) -> MatchMarkets:
+     home_win = draw = away_win = 0.0
+     btts_yes = 0.0
++    home_by_1plus = home_by_2plus = 0.0
++    away_by_1plus = away_by_2plus = 0.0
++    btts_and_over25 = btts_and_under25 = 0.0
++    home_and_over25 = away_and_over25 = 0.0
+     total_goals_probs: dict[int, float] = {}
+ 
+     for h in range(matrix.max_goals + 1):
+         for a in range(matrix.max_goals + 1):
+             p = matrix.matrix[h][a]
+             total = h + a
++            diff = h - a
+ 
+-            if h > a:
++            if diff > 0:
+                 home_win += p
+-            elif h == a:
++            elif diff == 0:
+                 draw += p
+             else:
+                 away_win += p
+ 
+-            if h >= 1 and a >= 1:
++            if diff >= 1:
++                home_by_1plus += p
++            if diff >= 2:
++                home_by_2plus += p
++            if diff <= -1:
++                away_by_1plus += p
++            if diff <= -2:
++                away_by_2plus += p
++
++            btts = h >= 1 and a >= 1
++            if btts:
+                 btts_yes += p
++                if total > 2.5:
++                    btts_and_over25 += p
++                else:
++                    btts_and_under25 += p
++
++            if diff > 0 and total > 2.5:
++                home_and_over25 += p
++            if diff < 0 and total > 2.5:
++                away_and_over25 += p
+ 
+             total_goals_probs[total] = total_goals_probs.get(total, 0.0) + p
+ 
+@@ -69,12 +111,27 @@ def calc_markets(matrix: ScoreMatrix) -> MatchMarkets:
+         over_15=over(1.5),
+         over_25=over(2.5),
+         over_35=over(3.5),
++        over_45=over(4.5),
+         under_05=under(0.5),
+         under_15=under(1.5),
+         under_25=under(2.5),
+         under_35=under(3.5),
++        under_45=under(4.5),
+         btts_yes=btts_yes,
+         btts_no=1.0 - btts_yes,
+-        ah_home_minus_half=home_win,
+-        ah_away_minus_half=away_win,
++        ah_home_minus_half=home_by_1plus,
++        ah_home_minus_one=home_by_2plus,         # ties (1-goal win) get refunded — model excludes them
++        ah_home_minus_one_half=home_by_2plus,
++        ah_home_plus_half=home_win + draw,
++        ah_away_minus_half=away_by_1plus,
++        ah_away_minus_one=away_by_2plus,
++        ah_away_minus_one_half=away_by_2plus,
++        ah_away_plus_half=away_win + draw,
++        btts_and_over_25=btts_and_over25,
++        btts_and_under_25=btts_and_under25,
++        home_and_over_25=home_and_over25,
++        away_and_over_25=away_and_over25,
++        score_0_1_goals=total_goals_probs.get(0, 0.0) + total_goals_probs.get(1, 0.0),
++        score_2_3_goals=total_goals_probs.get(2, 0.0) + total_goals_probs.get(3, 0.0),
++        score_4_plus_goals=sum(v for k, v in total_goals_probs.items() if k >= 4),
+     )
+diff --git a/backend/app/core/odds.py b/backend/app/core/odds.py
+index 1b5c1eb..0ea1a96 100644
+--- a/backend/app/core/odds.py
++++ b/backend/app/core/odds.py
+@@ -1,4 +1,4 @@
+-from dataclasses import dataclass
++from dataclasses import dataclass, fields
+ 
+ from app.core.markets import MatchMarkets
+ 
+@@ -23,36 +23,35 @@ class FairOdds:
+     over_15: float
+     over_25: float
+     over_35: float
++    over_45: float
+     under_05: float
+     under_15: float
+     under_25: float
+     under_35: float
++    under_45: float
+     btts_yes: float
+     btts_no: float
+     ah_home_minus_half: float
++    ah_home_minus_one: float
++    ah_home_minus_one_half: float
++    ah_home_plus_half: float
+     ah_away_minus_half: float
++    ah_away_minus_one: float
++    ah_away_minus_one_half: float
++    ah_away_plus_half: float
++    btts_and_over_25: float
++    btts_and_under_25: float
++    home_and_over_25: float
++    away_and_over_25: float
++    score_0_1_goals: float
++    score_2_3_goals: float
++    score_4_plus_goals: float
+ 
+ 
+ def calc_fair_odds(markets: MatchMarkets) -> FairOdds:
++    # FairOdds mirrors MatchMarkets field-by-field; convert each prob to odds.
+     return FairOdds(
+-        home_win=prob_to_odds(markets.home_win),
+-        draw=prob_to_odds(markets.draw),
+-        away_win=prob_to_odds(markets.away_win),
+-        home_or_draw=prob_to_odds(markets.home_or_draw),
+-        away_or_draw=prob_to_odds(markets.away_or_draw),
+-        home_or_away=prob_to_odds(markets.home_or_away),
+-        over_05=prob_to_odds(markets.over_05),
+-        over_15=prob_to_odds(markets.over_15),
+-        over_25=prob_to_odds(markets.over_25),
+-        over_35=prob_to_odds(markets.over_35),
+-        under_05=prob_to_odds(markets.under_05),
+-        under_15=prob_to_odds(markets.under_15),
+-        under_25=prob_to_odds(markets.under_25),
+-        under_35=prob_to_odds(markets.under_35),
+-        btts_yes=prob_to_odds(markets.btts_yes),
+-        btts_no=prob_to_odds(markets.btts_no),
+-        ah_home_minus_half=prob_to_odds(markets.ah_home_minus_half),
+-        ah_away_minus_half=prob_to_odds(markets.ah_away_minus_half),
++        **{f.name: prob_to_odds(getattr(markets, f.name)) for f in fields(FairOdds)}
+     )
+ 
+ 
+@@ -63,18 +62,33 @@ class ValueResult:
+     bookie_odds: float
+     ev_pct: float      # expected value %
+     has_value: bool    # True if EV > 0
++    kelly_pct: float   # fraction of bankroll the Kelly criterion suggests (0..1)
+ 
+ 
+ def calc_value(market: str, fair_odds: float, bookie_odds: float) -> ValueResult:
+     """
+     EV% = (bookie_odds / fair_odds - 1) × 100
+     Positive EV means the bookie is paying more than the fair price.
++
++    Kelly stake = (b·p − q) / b, where:
++      - b = bookie_odds − 1 (net profit per unit staked on a win)
++      - p = true win probability (= 1 / fair_odds)
++      - q = 1 − p
++    Returned as a fraction of the bankroll, clamped to [0, 1]. Use a "fractional
++    Kelly" (e.g. 25%) downstream if you want a less aggressive sizing.
+     """
+     ev_pct = round((bookie_odds / fair_odds - 1) * 100, 2)
++
++    p = 1.0 / max(fair_odds, MIN_PROB)
++    b = max(bookie_odds - 1.0, 1e-9)
++    kelly_raw = (b * p - (1 - p)) / b
++    kelly = max(0.0, min(1.0, kelly_raw))
++
+     return ValueResult(
+         market=market,
+         fair_odds=fair_odds,
+         bookie_odds=bookie_odds,
+         ev_pct=ev_pct,
+         has_value=ev_pct > 0,
++        kelly_pct=round(kelly, 4),
+     )
+diff --git a/backend/app/models/schemas.py b/backend/app/models/schemas.py
+index 679fc4a..78f142c 100644
+--- a/backend/app/models/schemas.py
++++ b/backend/app/models/schemas.py
+@@ -83,46 +83,55 @@ class ScoreProb(BaseModel):
+     prob: float
+ 
+ 
+-class MarketsOut(BaseModel):
++class _MarketFields(BaseModel):
++    # 1X2
+     home_win: float
+     draw: float
+     away_win: float
++    # Double chance
+     home_or_draw: float
+     away_or_draw: float
+     home_or_away: float
++    # Over/Under
+     over_05: float
+     over_15: float
+     over_25: float
+     over_35: float
++    over_45: float
+     under_05: float
+     under_15: float
+     under_25: float
+     under_35: float
++    under_45: float
++    # BTTS
+     btts_yes: float
+     btts_no: float
++    # Asian Handicap
+     ah_home_minus_half: float
++    ah_home_minus_one: float
++    ah_home_minus_one_half: float
++    ah_home_plus_half: float
+     ah_away_minus_half: float
++    ah_away_minus_one: float
++    ah_away_minus_one_half: float
++    ah_away_plus_half: float
++    # Combined
++    btts_and_over_25: float
++    btts_and_under_25: float
++    home_and_over_25: float
++    away_and_over_25: float
++    # Score ranges
++    score_0_1_goals: float
++    score_2_3_goals: float
++    score_4_plus_goals: float
+ 
+ 
+-class FairOddsOut(BaseModel):
+-    home_win: float
+-    draw: float
+-    away_win: float
+-    home_or_draw: float
+-    away_or_draw: float
+-    home_or_away: float
+-    over_05: float
+-    over_15: float
+-    over_25: float
+-    over_35: float
+-    under_05: float
+-    under_15: float
+-    under_25: float
+-    under_35: float
+-    btts_yes: float
+-    btts_no: float
+-    ah_home_minus_half: float
+-    ah_away_minus_half: float
++class MarketsOut(_MarketFields):
++    pass
++
++
++class FairOddsOut(_MarketFields):
++    pass
+ 
+ 
+ class MatchAnalysisOut(BaseModel):
+@@ -151,4 +160,6 @@ class ValueCheckOut(BaseModel):
+     bookie_odds: float
+     ev_pct: float
+     has_value: bool
++    kelly_pct: float       # full-Kelly fraction of bankroll (0..1)
++    quarter_kelly_pct: float  # conservative 25%-Kelly suggestion
+     verdict: str
+diff --git a/frontend/src/components/MarketsGrid.tsx b/frontend/src/components/MarketsGrid.tsx
+index 365d71c..5013d73 100644
+--- a/frontend/src/components/MarketsGrid.tsx
++++ b/frontend/src/components/MarketsGrid.tsx
+@@ -44,6 +44,8 @@ export default function MarketsGrid({ markets, fairOdds, homeName, awayName }: P
+         { label: 'Over 1.5', prob: markets.over_15, odds: fairOdds.over_15, tooltip: 'Ao menos 2 gols na partida' },
+         { label: 'Over 2.5', prob: markets.over_25, odds: fairOdds.over_25, tooltip: 'Ao menos 3 gols na partida' },
+         { label: 'Over 3.5', prob: markets.over_35, odds: fairOdds.over_35, tooltip: 'Ao menos 4 gols na partida' },
++        { label: 'Over 4.5', prob: markets.over_45, odds: fairOdds.over_45, tooltip: 'Ao menos 5 gols na partida' },
++        { label: 'Under 1.5', prob: markets.under_15, odds: fairOdds.under_15, tooltip: 'Menos de 2 gols na partida' },
+         { label: 'Under 2.5', prob: markets.under_25, odds: fairOdds.under_25, tooltip: 'Menos de 3 gols na partida' },
+         { label: 'Under 3.5', prob: markets.under_35, odds: fairOdds.under_35, tooltip: 'Menos de 4 gols na partida' },
+       ],
+@@ -59,7 +61,28 @@ export default function MarketsGrid({ markets, fairOdds, homeName, awayName }: P
+       title: 'Asian Handicap',
+       rows: [
+         { label: `${homeName} -0.5`, prob: markets.ah_home_minus_half, odds: fairOdds.ah_home_minus_half, tooltip: 'Mandante vence por 1 ou mais gols' },
++        { label: `${homeName} -1.5`, prob: markets.ah_home_minus_one_half, odds: fairOdds.ah_home_minus_one_half, tooltip: 'Mandante vence por 2 ou mais gols' },
++        { label: `${homeName} +0.5`, prob: markets.ah_home_plus_half, odds: fairOdds.ah_home_plus_half, tooltip: 'Mandante não perde (vitória ou empate)' },
+         { label: `${awayName} -0.5`, prob: markets.ah_away_minus_half, odds: fairOdds.ah_away_minus_half, tooltip: 'Visitante vence por 1 ou mais gols' },
++        { label: `${awayName} -1.5`, prob: markets.ah_away_minus_one_half, odds: fairOdds.ah_away_minus_one_half, tooltip: 'Visitante vence por 2 ou mais gols' },
++        { label: `${awayName} +0.5`, prob: markets.ah_away_plus_half, odds: fairOdds.ah_away_plus_half, tooltip: 'Visitante não perde (vitória ou empate)' },
++      ],
++    },
++    {
++      title: 'Mercados Combinados',
++      rows: [
++        { label: 'BTTS Sim + Over 2.5', prob: markets.btts_and_over_25, odds: fairOdds.btts_and_over_25, tooltip: 'Ambos marcam E mais de 2.5 gols' },
++        { label: 'BTTS Sim + Under 2.5', prob: markets.btts_and_under_25, odds: fairOdds.btts_and_under_25, tooltip: 'Ambos marcam (1-1 típico) E menos de 3 gols' },
++        { label: `${homeName} vence + Over 2.5`, prob: markets.home_and_over_25, odds: fairOdds.home_and_over_25, tooltip: 'Mandante vence E mais de 2.5 gols' },
++        { label: `${awayName} vence + Over 2.5`, prob: markets.away_and_over_25, odds: fairOdds.away_and_over_25, tooltip: 'Visitante vence E mais de 2.5 gols' },
++      ],
++    },
++    {
++      title: 'Faixa de Gols',
++      rows: [
++        { label: '0 ou 1 gols', prob: markets.score_0_1_goals, odds: fairOdds.score_0_1_goals, tooltip: 'Total de 0 ou 1 gol na partida' },
++        { label: '2 ou 3 gols', prob: markets.score_2_3_goals, odds: fairOdds.score_2_3_goals, tooltip: 'Total de exatamente 2 ou 3 gols' },
++        { label: '4 ou mais gols', prob: markets.score_4_plus_goals, odds: fairOdds.score_4_plus_goals, tooltip: 'Total de 4+ gols' },
+       ],
+     },
+   ]
+diff --git a/frontend/src/components/ValueFinder.tsx b/frontend/src/components/ValueFinder.tsx
+index 1e680b5..916499f 100644
+--- a/frontend/src/components/ValueFinder.tsx
++++ b/frontend/src/components/ValueFinder.tsx
+@@ -13,22 +13,32 @@ interface Props {
+ }
+ 
+ const MARKET_OPTIONS = (home: string, away: string) => [
+-  { key: 'home_win',          label: `Vitória ${home}` },
+-  { key: 'draw',              label: 'Empate' },
+-  { key: 'away_win',          label: `Vitória ${away}` },
+-  { key: 'home_or_draw',      label: `${home} ou Empate (1X)` },
+-  { key: 'away_or_draw',      label: `${away} ou Empate (X2)` },
+-  { key: 'home_or_away',      label: `${home} ou ${away} (12)` },
+-  { key: 'over_05',           label: 'Over 0.5 Gols' },
+-  { key: 'over_15',           label: 'Over 1.5 Gols' },
+-  { key: 'over_25',           label: 'Over 2.5 Gols' },
+-  { key: 'over_35',           label: 'Over 3.5 Gols' },
+-  { key: 'under_25',          label: 'Under 2.5 Gols' },
+-  { key: 'under_35',          label: 'Under 3.5 Gols' },
+-  { key: 'btts_yes',          label: 'BTTS Sim' },
+-  { key: 'btts_no',           label: 'BTTS Não' },
+-  { key: 'ah_home_minus_half', label: `${home} -0.5 AH` },
+-  { key: 'ah_away_minus_half', label: `${away} -0.5 AH` },
++  { key: 'home_win',                 label: `Vitória ${home}` },
++  { key: 'draw',                     label: 'Empate' },
++  { key: 'away_win',                 label: `Vitória ${away}` },
++  { key: 'home_or_draw',             label: `${home} ou Empate (1X)` },
++  { key: 'away_or_draw',             label: `${away} ou Empate (X2)` },
++  { key: 'home_or_away',             label: `${home} ou ${away} (12)` },
++  { key: 'over_05',                  label: 'Over 0.5 Gols' },
++  { key: 'over_15',                  label: 'Over 1.5 Gols' },
++  { key: 'over_25',                  label: 'Over 2.5 Gols' },
++  { key: 'over_35',                  label: 'Over 3.5 Gols' },
++  { key: 'over_45',                  label: 'Over 4.5 Gols' },
++  { key: 'under_15',                 label: 'Under 1.5 Gols' },
++  { key: 'under_25',                 label: 'Under 2.5 Gols' },
++  { key: 'under_35',                 label: 'Under 3.5 Gols' },
++  { key: 'btts_yes',                 label: 'BTTS Sim' },
++  { key: 'btts_no',                  label: 'BTTS Não' },
++  { key: 'ah_home_minus_half',       label: `${home} -0.5 AH` },
++  { key: 'ah_home_minus_one_half',   label: `${home} -1.5 AH` },
++  { key: 'ah_home_plus_half',        label: `${home} +0.5 AH` },
++  { key: 'ah_away_minus_half',       label: `${away} -0.5 AH` },
++  { key: 'ah_away_minus_one_half',   label: `${away} -1.5 AH` },
++  { key: 'ah_away_plus_half',        label: `${away} +0.5 AH` },
++  { key: 'btts_and_over_25',         label: 'BTTS Sim + Over 2.5' },
++  { key: 'btts_and_under_25',        label: 'BTTS Sim + Under 2.5' },
++  { key: 'home_and_over_25',         label: `${home} vence + Over 2.5` },
++  { key: 'away_and_over_25',         label: `${away} vence + Over 2.5` },
+ ]
+ 
+ export default function ValueFinder({ fairOdds, homeName, awayName }: Props) {
+@@ -174,6 +184,21 @@ export default function ValueFinder({ fairOdds, homeName, awayName }: Props) {
+                     </strong>
+                   </span>
+                 </div>
++                {result.has_value && result.kelly_pct > 0 && (
++                  <div className="mt-3 pt-3 border-t border-surface-700/60 text-xs">
++                    <div className="flex items-center justify-between gap-2 mb-1">
++                      <Tooltip content="Kelly Criterion: fração do bankroll que maximiza o crescimento geométrico no longo prazo. Full Kelly = agressivo. 1/4 Kelly = conservador (recomendado para a maioria).">
++                        <span className="text-surface-400 border-b border-dashed border-surface-500 cursor-help">
++                          Tamanho sugerido (Kelly)
++                        </span>
++                      </Tooltip>
++                    </div>
++                    <div className="flex flex-wrap gap-x-4 gap-y-1">
++                      <span>Full Kelly: <strong className="text-white font-mono">{(result.kelly_pct * 100).toFixed(2)}%</strong> do bankroll</span>
++                      <span>1/4 Kelly: <strong className="text-brand-400 font-mono">{(result.quarter_kelly_pct * 100).toFixed(2)}%</strong> (recomendado)</span>
++                    </div>
++                  </div>
++                )}
+               </div>
+             </div>
+           </motion.div>
+diff --git a/frontend/src/types/index.ts b/frontend/src/types/index.ts
+index 6455a24..17ca6cc 100644
+--- a/frontend/src/types/index.ts
++++ b/frontend/src/types/index.ts
+@@ -43,47 +43,51 @@ export interface ScoreProb {
+   prob: number
+ }
+ 
+-export interface Markets {
++export interface MarketSet {
++  // 1X2
+   home_win: number
+   draw: number
+   away_win: number
++  // Double chance
+   home_or_draw: number
+   away_or_draw: number
+   home_or_away: number
++  // Over / Under
+   over_05: number
+   over_15: number
+   over_25: number
+   over_35: number
++  over_45: number
+   under_05: number
+   under_15: number
+   under_25: number
+   under_35: number
++  under_45: number
++  // BTTS
+   btts_yes: number
+   btts_no: number
++  // Asian Handicap
+   ah_home_minus_half: number
++  ah_home_minus_one: number
++  ah_home_minus_one_half: number
++  ah_home_plus_half: number
+   ah_away_minus_half: number
++  ah_away_minus_one: number
++  ah_away_minus_one_half: number
++  ah_away_plus_half: number
++  // Combined
++  btts_and_over_25: number
++  btts_and_under_25: number
++  home_and_over_25: number
++  away_and_over_25: number
++  // Score ranges
++  score_0_1_goals: number
++  score_2_3_goals: number
++  score_4_plus_goals: number
+ }
+ 
+-export interface FairOdds {
+-  home_win: number
+-  draw: number
+-  away_win: number
+-  home_or_draw: number
+-  away_or_draw: number
+-  home_or_away: number
+-  over_05: number
+-  over_15: number
+-  over_25: number
+-  over_35: number
+-  under_05: number
+-  under_15: number
+-  under_25: number
+-  under_35: number
+-  btts_yes: number
+-  btts_no: number
+-  ah_home_minus_half: number
+-  ah_away_minus_half: number
+-}
++export type Markets = MarketSet
++export type FairOdds = MarketSet
+ 
+ export interface MatchAnalysis {
+   lambda_home: number
+@@ -159,5 +163,7 @@ export interface ValueCheckResult {
+   bookie_odds: number
+   ev_pct: number
+   has_value: boolean
++  kelly_pct: number
++  quarter_kelly_pct: number
+   verdict: string
+ }
+-- 
+2.43.0
+
