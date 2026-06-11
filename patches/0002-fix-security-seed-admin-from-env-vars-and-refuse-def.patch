@@ -1,8 +1,8 @@
 From 6fc11985815a93b7d010fcc3adc215ef836dcddb Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 10 Jun 2026 09:54:46 +0000
-Subject: [PATCH 2/9] fix(security): seed admin from env vars and refuse
- default JWT secret in production
+Subject: [PATCH] fix(security): seed admin from env vars and refuse default
+ JWT secret in production
 
 - Remove hardcoded admin email/password from main.py; require ADMIN_EMAIL /
   ADMIN_PASSWORD env vars to seed (otherwise silently skip).

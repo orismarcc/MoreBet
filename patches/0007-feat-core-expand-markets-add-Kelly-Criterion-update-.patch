@@ -1,8 +1,7 @@
 From 6ffc9c97f3d590c8928ab55a3a8a3de6016b4976 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 10 Jun 2026 10:00:32 +0000
-Subject: [PATCH 7/9] feat(core): expand markets, add Kelly Criterion, update
- UI
+Subject: [PATCH] feat(core): expand markets, add Kelly Criterion, update UI
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

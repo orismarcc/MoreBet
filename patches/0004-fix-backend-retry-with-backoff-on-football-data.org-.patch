@@ -1,7 +1,7 @@
 From c4d6c5eb6a7232c6d294d0e571e1578cb575059f Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 10 Jun 2026 09:55:58 +0000
-Subject: [PATCH 4/9] fix(backend): retry with backoff on football-data.org
+Subject: [PATCH] fix(backend): retry with backoff on football-data.org
  rate-limit and 5xx
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

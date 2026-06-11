@@ -39,6 +39,12 @@ Para descartar e tentar de novo: `git am --abort`.
 | 0007 | feat(core) | Mercados expandidos (AH ±1/±1.5/+0.5, Over 1.5/4.5, combinados, faixas) + Kelly Criterion no Value Finder |
 | 0008 | feat(frontend) | Grid de ligas com escudos, badge de staleness, botão "atualizar todas" |
 | 0009 | feat(frontend) | ErrorBoundary + sistema de toast |
+| 0011 | chore | Refresh do package-lock.json |
+| 0012 | feat | **Copa do Mundo FIFA** (modelo campo neutro + fallback edição anterior) + refresh automático a cada 6h + bootstrap no boot |
+| 0013 | docs | Atualização do AUDIT.md com as features pós-auditoria |
+
+> Não existe patch 0010 — era o commit que empacotava esta própria pasta
+> `patches/` (recursivo, sem valor para o reviewer).
 
 ## Verificações já rodadas
 

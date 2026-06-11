@@ -1,7 +1,7 @@
 From 450d6e47aeba7dba2f0eebb17d1840884a320280 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 10 Jun 2026 10:04:38 +0000
-Subject: [PATCH 9/9] feat(frontend): error boundary and toast notifications
+Subject: [PATCH] feat(frontend): error boundary and toast notifications
 
 - ErrorBoundary catches unhandled render/effect errors and shows a friendly
   recovery screen with the error message + a reset button instead of a blank

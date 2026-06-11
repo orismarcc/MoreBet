@@ -1,8 +1,8 @@
 From a47de8879fd276e3be02ece36971e6d3fb8c0e99 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 10 Jun 2026 09:56:23 +0000
-Subject: [PATCH 5/9] perf(backend): parallelise league fixtures fetch and
- batch team lookup
+Subject: [PATCH] perf(backend): parallelise league fixtures fetch and batch
+ team lookup
 
 - Replace the sequential for-loop over 8 leagues with asyncio.gather under a
   semaphore of 4 in-flight requests (still safe under the 10 req/min limit

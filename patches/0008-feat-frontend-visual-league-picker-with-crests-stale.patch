@@ -1,8 +1,8 @@
 From 1c048fd0db6336e9b1abf2e8c945604012a6a1e4 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 10 Jun 2026 10:02:52 +0000
-Subject: [PATCH 8/9] feat(frontend): visual league picker with crests,
- staleness badge and refresh-all
+Subject: [PATCH] feat(frontend): visual league picker with crests, staleness
+ badge and refresh-all
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

@@ -1,7 +1,7 @@
 From bf53a4d40da450998be10425a2e978a03f6b8609 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 10 Jun 2026 09:57:49 +0000
-Subject: [PATCH 6/9] feat(core): apply Dixon-Coles low-score correction to the
+Subject: [PATCH] feat(core): apply Dixon-Coles low-score correction to the
  score matrix
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,8 +1,7 @@
 From f80113b549a86af35485cdbb213612ebe327f7c2 Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 10 Jun 2026 09:55:16 +0000
-Subject: [PATCH 3/9] refactor(backend): remove broken legacy api-football
- provider
+Subject: [PATCH] refactor(backend): remove broken legacy api-football provider
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

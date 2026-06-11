@@ -1,7 +1,7 @@
 From bd879ac075a988dd53c7632dcadca637e8dbe28c Mon Sep 17 00:00:00 2001
 From: Claude <noreply@anthropic.com>
 Date: Wed, 10 Jun 2026 09:54:11 +0000
-Subject: [PATCH 1/9] docs: add full project audit and roadmap checklist
+Subject: [PATCH] docs: add full project audit and roadmap checklist
 
 ---
  docs/AUDIT.md | 84 +++++++++++++++++++++++++++++++++++++++++++++++++++

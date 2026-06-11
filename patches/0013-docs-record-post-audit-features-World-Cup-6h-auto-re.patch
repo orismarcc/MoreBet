@@ -1,0 +1,32 @@
+From f90109c89c1f07bca272b33acf50a3611085567e Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Thu, 11 Jun 2026 00:27:59 +0000
+Subject: [PATCH] docs: record post-audit features (World Cup, 6h auto-refresh,
+ bootstrap)
+
+---
+ docs/AUDIT.md | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/docs/AUDIT.md b/docs/AUDIT.md
+index 35ecbd3..f913ea3 100644
+--- a/docs/AUDIT.md
++++ b/docs/AUDIT.md
+@@ -66,6 +66,14 @@
+ 
+ ---
+ 
++## Features adicionadas pós-auditoria
++
++| Item | Status |
++|------|--------|
++| **Copa do Mundo FIFA** (código WC, free tier) — fixtures, refresh e análise com modelo de campo neutro; fallback para edição anterior antes do pontapé inicial; média do campo para estreantes. | ✅ |
++| **Refresh automático a cada 6h** (00/06/12/18 UTC) em vez de 1×/dia. | ✅ |
++| **Bootstrap automático**: deploy novo com banco vazio se popula sozinho no boot. | ✅ |
++
+ ## Sugestões de páginas adicionais
+ 
+ - **/league/:id** — visão completa de uma liga (standings + jogos recentes + próximos + leader stats).
+-- 
+2.43.0
+
