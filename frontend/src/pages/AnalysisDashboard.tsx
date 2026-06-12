@@ -9,6 +9,7 @@ import ValueFinder from '../components/ValueFinder'
 import RecentForm from '../components/RecentForm'
 import HeadToHead from '../components/HeadToHead'
 import StatCard from '../components/StatCard'
+import RecommendationCard from '../components/RecommendationCard'
 
 interface Props {
   analysis: MatchAnalysis
@@ -87,6 +88,17 @@ export default function AnalysisDashboard({ analysis, onBack }: Props) {
           delay={0.15}
         />
       </div>
+
+      {/* Recomendação inteligente do agente */}
+      <RecommendationCard
+        payload={{
+          home_team_id: home.id,
+          away_team_id: away.id,
+          absent_home: [],
+          absent_away: [],
+          xg_weight: 0.4,
+        }}
+      />
 
       {/* Probabilidades + λ | Heatmap — lado a lado no desktop */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">

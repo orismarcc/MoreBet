@@ -6,6 +6,7 @@ import { leaguesApi, teamsApi } from '../lib/api'
 import { useToast } from '../lib/toast'
 import PlayerAbsenceSelector from '../components/PlayerAbsenceSelector'
 import Spinner from '../components/Spinner'
+import BacktestPanel from '../components/BacktestPanel'
 
 function relativeAge(iso: string | null): { label: string; stale: boolean } {
   if (!iso) return { label: 'nunca atualizado', stale: true }
@@ -220,6 +221,14 @@ export default function MatchSelector({ onAnalyse, loading }: Props) {
               )
             })()}
           </div>
+        )}
+
+        {selectedLeague && (
+          <BacktestPanel
+            key={selectedLeague.id}
+            leagueApiId={selectedLeague.api_id}
+            leagueName={selectedLeague.name}
+          />
         )}
       </motion.div>
 

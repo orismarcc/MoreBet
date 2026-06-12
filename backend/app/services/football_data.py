@@ -438,6 +438,46 @@ async def fetch_league_with_form(
     return league_dict, teams_list
 
 
+async def fetch_league_finished_matches(
+    client: httpx.AsyncClient, league_id: int
+) -> tuple[dict, list[dict]]:
+    """All finished matches of a league (previous + current season), oldest
+    first — the input for walk-forward backtesting. Returns (league_info,
+    matches) where each match is {utc_date, home_id, away_id, home_goals,
+    away_goals}. Cached for 1h: backtests re-run cheaply."""
+    code, name, country = FD_LEAGUES[league_id]
+    current = await _get_matches(client, code, ttl=3600.0)
+    season_year = current.get("filters", {}).get("season")
+    all_raw = list(current.get("matches", []))
+    if season_year is not None:
+        try:
+            prev = await _get_matches(client, code, season=int(season_year) - 1, ttl=3600.0)
+            all_raw = list(prev.get("matches", [])) + all_raw
+        except httpx.HTTPError:
+            pass
+
+    finished = [
+        m for m in all_raw
+        if m["status"] == _FINISHED
+        and m["score"]["fullTime"]["home"] is not None
+        and m["score"]["fullTime"]["away"] is not None
+        and m["homeTeam"].get("id") and m["awayTeam"].get("id")
+    ]
+    finished.sort(key=lambda m: m["utcDate"])
+    matches = [
+        {
+            "utc_date": m["utcDate"],
+            "home_id": m["homeTeam"]["id"],
+            "away_id": m["awayTeam"]["id"],
+            "home_goals": m["score"]["fullTime"]["home"],
+            "away_goals": m["score"]["fullTime"]["away"],
+        }
+        for m in finished
+    ]
+    league_info = {"api_id": league_id, "name": name, "country": country}
+    return league_info, matches
+
+
 # The per-team matches endpoint 403s on the free tier whenever the team has
 # matches in a restricted competition (e.g. Werder/Leipzig in the DFB-Pokal) —
 # no filter combination unlocks it. Once we see a 403 we remember it and use

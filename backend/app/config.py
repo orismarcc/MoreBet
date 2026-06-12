@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     admin_email: str = ""
     admin_password: str = ""
 
+    # Claude API — per-matchup recommendation agent. Empty key disables the
+    # /matches/recommend endpoint gracefully (503).
+    anthropic_api_key: str = ""
+    anthropic_model: str = "claude-opus-4-8"
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",")]

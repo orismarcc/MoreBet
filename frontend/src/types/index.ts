@@ -240,3 +240,61 @@ export interface ValueCheckResult {
   quarter_kelly_pct: number
   verdict: string
 }
+
+// ── Agente de recomendação ───────────────────────────────────────────────────
+
+export type RecommendationConfidence = 'alta' | 'media' | 'baixa'
+
+export interface AgentRecommendation {
+  market: string
+  market_label: string
+  model_probability: number
+  fair_odds: number
+  min_bookie_odds: number
+  confidence: RecommendationConfidence
+  rationale: string
+  caveats: string[]
+}
+
+export interface RecommendationReport {
+  no_bet: boolean
+  summary: string
+  recommendations: AgentRecommendation[]
+  data_quality_notes: string[]
+  model_id: string
+  cached: boolean
+}
+
+// ── Backtest ─────────────────────────────────────────────────────────────────
+
+export interface CalibrationBucket {
+  range_low: number
+  range_high: number
+  predicted_avg: number
+  observed_freq: number
+  count: number
+}
+
+export interface BacktestReport {
+  league_api_id: number
+  league_name: string
+  n_matches_total: number
+  n_predicted: number
+  n_skipped: number
+  period_from: string | null
+  period_to: string | null
+  brier_1x2_model: number | null
+  brier_1x2_baseline: number | null
+  skill_score_1x2: number | null
+  log_loss_model: number | null
+  log_loss_baseline: number | null
+  accuracy_model: number | null
+  accuracy_baseline: number | null
+  brier_over25_model: number | null
+  brier_over25_baseline: number | null
+  over25_base_rate: number | null
+  brier_btts_model: number | null
+  brier_btts_baseline: number | null
+  btts_base_rate: number | null
+  calibration: CalibrationBucket[]
+}

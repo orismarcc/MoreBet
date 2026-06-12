@@ -17,10 +17,17 @@ from app.models.schemas import (
     ValueCheckIn,
     ValueCheckOut,
 )
+from app.core.backtest import run_backtest
 from app.core.engine import TeamInput, analyse_match
 from app.core.strength import LeagueAverages
 from app.core.odds import calc_value
-from app.services.football_data import FD_LEAGUES, fetch_head_to_head
+from app.services import recommender
+from app.services.football_data import (
+    FD_LEAGUES,
+    fetch_head_to_head,
+    fetch_league_finished_matches,
+    fetch_team_recent_matches,
+)
 from app.services.espn import fetch_match_details
 
 router = APIRouter(prefix="/matches", tags=["matches"])
@@ -109,8 +116,10 @@ def _player_modifier(absent_players: list, team_total_contribution: float = 1.0)
     return max(1.0 - total_impact, 0.50)
 
 
-@router.post("/calculate", response_model=MatchAnalysisOut)
-def calculate_match(payload: CalculateMatchIn, db: Session = Depends(get_db)):
+def _run_analysis(payload: CalculateMatchIn, db: Session):
+    """Shared by /calculate and /recommend: validates teams/league and runs
+    the full model pipeline. Returns (result, home_team, away_team, league,
+    home_modifier, away_modifier)."""
     home_team = db.query(Team).filter(Team.id == payload.home_team_id).first()
     away_team = db.query(Team).filter(Team.id == payload.away_team_id).first()
 
@@ -156,6 +165,13 @@ def calculate_match(payload: CalculateMatchIn, db: Session = Depends(get_db)):
     )
 
     result = analyse_match(team_input, league_avgs, xg_weight=payload.xg_weight)
+    return result, home_team, away_team, league, home_modifier, away_modifier
+
+
+@router.post("/calculate", response_model=MatchAnalysisOut)
+def calculate_match(payload: CalculateMatchIn, db: Session = Depends(get_db)):
+    result, home_team, away_team, _league, home_modifier, away_modifier = \
+        _run_analysis(payload, db)
 
     top_scores = [
         ScoreProb(home=h, away=a, prob=round(p, 6))
@@ -173,6 +189,147 @@ def calculate_match(payload: CalculateMatchIn, db: Session = Depends(get_db)):
         home_team=TeamOut.model_validate(home_team),
         away_team=TeamOut.model_validate(away_team),
     )
+
+
+# Backtest summaries are expensive-ish (provider fetch + full replay); keep a
+# small per-league memo so the recommendation flow stays snappy.
+import time as _time
+_bt_cache: dict[int, tuple[float, dict | None]] = {}
+_BT_TTL = 6 * 3600.0
+
+
+async def _backtest_summary(client: httpx.AsyncClient, league_api_id: int) -> dict | None:
+    """Best-effort league backtest summary for the agent dossier."""
+    hit = _bt_cache.get(league_api_id)
+    if hit and _time.monotonic() - hit[0] < _BT_TTL:
+        return hit[1]
+    summary: dict | None = None
+    try:
+        _info, matches = await fetch_league_finished_matches(client, league_api_id)
+        bt = run_backtest(matches)
+        if bt.n_predicted >= 50:
+            summary = {
+                "jogos_avaliados": bt.n_predicted,
+                "skill_1x2": round(bt.skill_score_1x2, 3) if bt.skill_score_1x2 is not None else None,
+                "accuracy_1x2": round(bt.accuracy_model, 3) if bt.accuracy_model is not None else None,
+                "accuracy_baseline": round(bt.accuracy_baseline, 3) if bt.accuracy_baseline is not None else None,
+                "skill_over25": (
+                    round(1 - bt.brier_over25_model / bt.brier_over25_baseline, 3)
+                    if bt.brier_over25_model and bt.brier_over25_baseline else None
+                ),
+                "skill_btts": (
+                    round(1 - bt.brier_btts_model / bt.brier_btts_baseline, 3)
+                    if bt.brier_btts_model and bt.brier_btts_baseline else None
+                ),
+            }
+    except Exception:  # provider down → agent just won't see backtest context
+        pass
+    _bt_cache[league_api_id] = (_time.monotonic(), summary)
+    return summary
+
+
+@router.post("/recommend", response_model=recommender.RecommendationReport)
+async def recommend_match(payload: CalculateMatchIn, db: Session = Depends(get_db)):
+    """Per-matchup AI analyst: builds a grounded dossier (model probabilities,
+    recent form, H2H, backtest quality) and asks the recommendation agent for
+    up to 3 markets with confidence levels — every number server-validated."""
+    if not recommender.is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Agente não configurado — defina ANTHROPIC_API_KEY no servidor.",
+        )
+
+    result, home_team, away_team, league, home_mod, away_mod = _run_analysis(payload, db)
+
+    markets = {k: round(v, 4) for k, v in result.markets.__dict__.items()}
+    hint = FD_LEAGUES[league.api_id][0] if league.api_id in FD_LEAGUES else None
+
+    # Qualitative context — best-effort; the agent must flag what's missing.
+    form_home = form_away = None
+    h2h: list[dict] = []
+    backtest = None
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            form_home = await fetch_team_recent_matches(
+                client, home_team.api_id, limit=6, league_hint=hint)
+            form_away = await fetch_team_recent_matches(
+                client, away_team.api_id, limit=6, league_hint=hint)
+            h2h = await fetch_head_to_head(
+                client, home_team.api_id, away_team.api_id, limit=5, league_hint=hint)
+            backtest = await _backtest_summary(client, league.api_id)
+    except httpx.HTTPError:
+        pass
+
+    def _form_block(form: dict | None) -> dict | None:
+        if not form:
+            return None
+        s = form["summary"]
+        return {
+            "sequencia": s["form"],
+            "jogos": s["played"],
+            "vitorias": s["wins"], "empates": s["draws"], "derrotas": s["losses"],
+            "media_gols_pro": s["avg_goals_for"],
+            "media_gols_contra": s["avg_goals_against"],
+            "pct_over25": s["over_25_pct"],
+            "pct_btts": s["btts_pct"],
+            "jogos_sem_sofrer": s["clean_sheets"],
+            "jogos_sem_marcar": s["failed_to_score"],
+            "pontos_por_jogo": s["ppg"],
+        }
+
+    dossier = {
+        "confronto": {
+            "mandante": home_team.name,
+            "visitante": away_team.name,
+            "liga": league.name,
+            "media_gols_mandantes_liga": round(league.home_goals_avg, 3),
+            "media_gols_visitantes_liga": round(league.away_goals_avg, 3),
+        },
+        "model": {
+            "lambda_mandante": round(result.lambda_home, 3),
+            "lambda_visitante": round(result.lambda_away, 3),
+            "modificador_desfalques_mandante": home_mod,
+            "modificador_desfalques_visitante": away_mod,
+            "markets": markets,
+            "placares_mais_provaveis": [
+                {"placar": f"{h}-{a}", "prob": round(p, 4)}
+                for h, a, p in result.top_scores[:5]
+            ],
+        },
+        "sample": {
+            "jogos_mandante_em_casa": home_team.home_played,
+            "jogos_visitante_fora": away_team.away_played,
+            "dados_atualizados_em": (
+                home_team.last_updated.isoformat() if home_team.last_updated else None
+            ),
+        },
+        "form": {
+            "mandante": _form_block(form_home),
+            "visitante": _form_block(form_away),
+        },
+        "h2h": [
+            {
+                "data": m["date"][:10],
+                "competicao": m["competition"],
+                "placar": f"{m['home_name']} {m['home_goals']}x{m['away_goals']} {m['away_name']}",
+            }
+            for m in h2h
+        ],
+        "backtest": backtest,
+    }
+
+    min_sample = min(home_team.home_played or 0, away_team.away_played or 0)
+    skill = backtest.get("skill_1x2") if backtest else None
+    try:
+        return await recommender.generate_recommendation(
+            cache_key=(home_team.id, away_team.id),
+            dossier=dossier,
+            markets=markets,
+            min_sample=min_sample,
+            backtest_skill=skill,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Falha no agente: {e}")
 
 
 @router.post("/value", response_model=ValueCheckOut)

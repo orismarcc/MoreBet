@@ -46,6 +46,10 @@ export const leaguesApi = {
   refreshAll: () =>
     api.post<{ results: string[] }>('/leagues/refresh-all', undefined, { timeout: 180_000 })
       .then(r => r.data),
+  backtest: (leagueApiId: number) =>
+    api.post<import('../types').BacktestReport>(`/leagues/${leagueApiId}/backtest`, undefined, {
+      timeout: 120_000,
+    }).then(r => r.data),
 }
 
 export const teamsApi = {
@@ -73,6 +77,11 @@ export const teamsApi = {
 export const matchesApi = {
   calculate: (payload: CalculateMatchPayload) =>
     api.post<MatchAnalysis>('/matches/calculate', payload).then(r => r.data),
+  // O agente analisa forma + H2H + backtest e chama o Claude — pode levar ~1min
+  recommend: (payload: CalculateMatchPayload) =>
+    api.post<import('../types').RecommendationReport>('/matches/recommend', payload, {
+      timeout: 180_000,
+    }).then(r => r.data),
   checkValue: (payload: ValueCheckPayload) =>
     api.post<ValueCheckResult>('/matches/value', payload).then(r => r.data),
   h2h: (homeApiId: number, awayApiId: number, limit = 3) =>
