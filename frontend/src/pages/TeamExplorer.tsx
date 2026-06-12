@@ -128,6 +128,7 @@ export default function TeamExplorer() {
               ? { kind: 'db', id: selected.db_id }
               : { kind: 'api', apiId: selected.api_id }}
             name="Últimos jogos"
+            queryName={selected.name}
             limit={10}
             withUpcoming
           />

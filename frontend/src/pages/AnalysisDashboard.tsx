@@ -7,6 +7,7 @@ import ScoreHeatmap from '../components/ScoreHeatmap'
 import MarketsGrid from '../components/MarketsGrid'
 import ValueFinder from '../components/ValueFinder'
 import RecentForm from '../components/RecentForm'
+import HeadToHead from '../components/HeadToHead'
 import StatCard from '../components/StatCard'
 
 interface Props {
@@ -120,6 +121,9 @@ export default function AnalysisDashboard({ analysis, onBack }: Props) {
           />
         </motion.div>
       </div>
+
+      {/* Confronto direto */}
+      <HeadToHead homeApiId={home.api_id} awayApiId={away.api_id} />
 
       {/* Forma recente dos dois times */}
       <RecentForm

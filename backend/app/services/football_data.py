@@ -8,7 +8,9 @@ MoreBet leagues *with the current season* — which the previous provider
 Auth is via the `X-Auth-Token` header. Free tier allows ~10 requests/minute.
 """
 import asyncio
+import json
 import logging
+import time
 from datetime import date, timedelta
 
 import httpx
@@ -20,21 +22,28 @@ logger = logging.getLogger(__name__)
 # Free tier limit is 10 req/min — leave generous headroom so concurrent
 # refreshes don't trip the limiter.
 _MAX_RETRIES = 4
-_BASE_BACKOFF = 2.0  # seconds; doubles each retry
+_BASE_BACKOFF = 2.0   # seconds; doubles each retry
+# Cap each retry sleep: the provider sends Retry-After: 60 when the minute
+# quota is gone, and honouring it verbatim makes our own request outlive the
+# frontend's timeout — the user just sees "dados indisponíveis". Failing fast
+# (and serving from cache, below) is the better trade.
+_MAX_RETRY_SLEEP = 6.0
 
 
 async def _get_with_retry(
     client: httpx.AsyncClient, url: str, *, params: dict | None = None
 ) -> dict:
-    """GET wrapper that retries on 429 / 5xx with exponential backoff and
-    honours the server's Retry-After header when present."""
+    """GET wrapper that retries on 429 / 5xx with capped exponential backoff."""
     for attempt in range(_MAX_RETRIES):
         r = await client.get(url, headers=_headers(), params=params or {})
         if r.status_code < 400:
             return r.json()
         # Retry on rate-limit or server errors.
         if r.status_code in (429, 500, 502, 503, 504) and attempt < _MAX_RETRIES - 1:
-            wait = float(r.headers.get("Retry-After", _BASE_BACKOFF * (2 ** attempt)))
+            wait = min(
+                float(r.headers.get("Retry-After", _BASE_BACKOFF * (2 ** attempt))),
+                _MAX_RETRY_SLEEP,
+            )
             logger.warning(
                 "football-data.org %s on %s — retrying in %.1fs (attempt %d/%d)",
                 r.status_code, url, wait, attempt + 1, _MAX_RETRIES,
@@ -44,6 +53,40 @@ async def _get_with_retry(
         r.raise_for_status()
     # Unreachable — raise_for_status above always throws on the last failed attempt.
     raise RuntimeError(f"unreachable: exhausted retries for {url}")
+
+
+# ── Small in-process TTL cache ───────────────────────────────────────────────
+# Team-level reads (recent form, upcoming, head-to-head) are hammered by the UI
+# but barely change within minutes. Caching them keeps bursts of user clicks
+# well inside the 10 req/min budget — this was the root cause of intermittent
+# "dados indisponíveis" on the Times page.
+_TTL_DEFAULT = 600.0  # 10 minutes
+_response_cache: dict[str, tuple[float, dict]] = {}
+
+
+async def _cached_get(
+    client: httpx.AsyncClient, url: str, *, params: dict | None = None,
+    ttl: float = _TTL_DEFAULT,
+) -> dict:
+    key = url + "|" + json.dumps(params or {}, sort_keys=True)
+    hit = _response_cache.get(key)
+    now = time.monotonic()
+    if hit and now - hit[0] < ttl:
+        return hit[1]
+    try:
+        data = await _get_with_retry(client, url, params=params)
+    except httpx.HTTPError:
+        # Provider unavailable — serve stale data if we have any, else re-raise.
+        if hit:
+            logger.warning("serving stale cache for %s (provider unavailable)", url)
+            return hit[1]
+        raise
+    _response_cache[key] = (now, data)
+    if len(_response_cache) > 500:  # bounded memory
+        oldest = sorted(_response_cache.items(), key=lambda kv: kv[1][0])[:100]
+        for k, _ in oldest:
+            _response_cache.pop(k, None)
+    return data
 
 # Stable API-Football numeric id (kept as the DB / frontend key) -> the
 # football-data.org competition code. Keeping the original ids means existing
@@ -277,7 +320,7 @@ async def fetch_team_upcoming_matches(
 ) -> list[dict]:
     """Next scheduled matches for a team within the coming 60 days."""
     today = date.today()
-    data = await _get_with_retry(
+    data = await _cached_get(
         client,
         f"{settings.football_data_base_url}/teams/{team_api_id}/matches",
         params={
@@ -312,7 +355,7 @@ async def fetch_team_recent_matches(
 ) -> dict:
     """Recent finished matches for a team (across all competitions) plus an
     aggregated form summary. `team_api_id` is the football-data.org team id."""
-    data = await _get_with_retry(
+    data = await _cached_get(
         client,
         f"{settings.football_data_base_url}/teams/{team_api_id}/matches",
         params={"status": "FINISHED", "limit": max(limit, 1)},
@@ -329,7 +372,7 @@ async def fetch_team_recent_matches(
 
     matches: list[dict] = []
     wins = draws = losses = gf = ga = 0
-    over_25 = btts = clean_sheets = failed_to_score = 0
+    over_15 = over_25 = btts = clean_sheets = failed_to_score = 0
 
     for m in raw:
         is_home = m["homeTeam"]["id"] == team_api_id
@@ -347,6 +390,8 @@ async def fetch_team_recent_matches(
 
         gf += my_goals
         ga += opp_goals
+        if my_goals + opp_goals > 1.5:
+            over_15 += 1
         if my_goals + opp_goals > 2.5:
             over_25 += 1
         if my_goals > 0 and opp_goals > 0:
@@ -382,6 +427,7 @@ async def fetch_team_recent_matches(
         "goals_against": ga,
         "avg_goals_for": round(gf / n, 2),
         "avg_goals_against": round(ga / n, 2),
+        "over_15_pct": round(over_15 / n * 100),
         "over_25_pct": round(over_25 / n * 100),
         "btts_pct": round(btts / n * 100),
         "clean_sheets": clean_sheets,
@@ -431,6 +477,48 @@ async def fetch_upcoming_fixtures(
             "away_team_logo": a.get("crest"),
         })
     return sorted(fixtures, key=lambda x: x["match_date"])
+
+
+async def fetch_head_to_head(
+    client: httpx.AsyncClient,
+    team_a_api_id: int,
+    team_b_api_id: int,
+    limit: int = 3,
+) -> list[dict]:
+    """Last direct meetings between two teams (within competitions the free
+    tier exposes). One cached call: team A's finished matches filtered for B."""
+    data = await _cached_get(
+        client,
+        f"{settings.football_data_base_url}/teams/{team_a_api_id}/matches",
+        params={"status": "FINISHED", "limit": 100},
+    )
+    meetings: list[dict] = []
+    for m in sorted(data.get("matches", []), key=lambda x: x["utcDate"], reverse=True):
+        h, a = m["homeTeam"], m["awayTeam"]
+        ids = {h.get("id"), a.get("id")}
+        if team_b_api_id not in ids or team_a_api_id not in ids:
+            continue
+        ft = m["score"]["fullTime"]
+        if ft["home"] is None or ft["away"] is None:
+            continue
+        comp = m.get("competition", {})
+        meetings.append({
+            "match_id": m["id"],
+            "date": m["utcDate"],
+            "competition": comp.get("name"),
+            "competition_code": comp.get("code"),
+            "home_api_id": h["id"],
+            "home_name": h["name"],
+            "home_crest": h.get("crest"),
+            "away_api_id": a["id"],
+            "away_name": a["name"],
+            "away_crest": a.get("crest"),
+            "home_goals": ft["home"],
+            "away_goals": ft["away"],
+        })
+        if len(meetings) >= limit:
+            break
+    return meetings
 
 
 # ── World Cup participants (national teams) ─────────────────────────────────

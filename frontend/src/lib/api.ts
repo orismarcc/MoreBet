@@ -73,6 +73,21 @@ export const matchesApi = {
     api.post<MatchAnalysis>('/matches/calculate', payload).then(r => r.data),
   checkValue: (payload: ValueCheckPayload) =>
     api.post<ValueCheckResult>('/matches/value', payload).then(r => r.data),
+  h2h: (homeApiId: number, awayApiId: number, limit = 3) =>
+    api.get<import('../types').H2HMatch[]>('/matches/h2h', {
+      params: { home_api_id: homeApiId, away_api_id: awayApiId, limit },
+      timeout: 45_000,
+    }).then(r => r.data),
+  details: (m: import('../types').MatchRef) =>
+    api.get<import('../types').MatchDetails>('/matches/details', {
+      params: {
+        date: m.date,
+        home: m.home_name,
+        away: m.away_name,
+        competition_code: m.competition_code ?? undefined,
+      },
+      timeout: 45_000,
+    }).then(r => r.data),
 }
 
 export const fixturesApi = {

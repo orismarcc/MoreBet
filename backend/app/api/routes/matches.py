@@ -1,6 +1,8 @@
 import functools
 
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -18,8 +20,74 @@ from app.models.schemas import (
 from app.core.engine import TeamInput, analyse_match
 from app.core.strength import LeagueAverages
 from app.core.odds import calc_value
+from app.services.football_data import fetch_head_to_head
+from app.services.espn import fetch_match_details
 
 router = APIRouter(prefix="/matches", tags=["matches"])
+
+
+class H2HMatch(BaseModel):
+    match_id: int
+    date: str
+    competition: str | None
+    competition_code: str | None
+    home_api_id: int
+    home_name: str
+    home_crest: str | None
+    away_api_id: int
+    away_name: str
+    away_crest: str | None
+    home_goals: int
+    away_goals: int
+
+
+class GoalEvent(BaseModel):
+    minute: str
+    side: str            # "home" | "away"
+    player: str | None
+    text: str
+
+
+class StatLabel(BaseModel):
+    key: str
+    label: str
+    suffix: str
+
+
+class MatchDetails(BaseModel):
+    found: bool
+    reason: str | None = None
+    source: str | None = None
+    stat_labels: list[StatLabel] = []
+    home_stats: dict[str, str | None] = {}
+    away_stats: dict[str, str | None] = {}
+    goals: list[GoalEvent] = []
+
+
+@router.get("/h2h", response_model=list[H2HMatch])
+async def head_to_head(
+    home_api_id: int = Query(...),
+    away_api_id: int = Query(...),
+    limit: int = Query(default=3, ge=1, le=10),
+):
+    """Last direct meetings between two teams (provider team api ids)."""
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            return await fetch_head_to_head(client, home_api_id, away_api_id, limit)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Data provider error: {e}")
+
+
+@router.get("/details", response_model=MatchDetails)
+async def match_details(
+    date: str = Query(..., description="ISO datetime of the match"),
+    home: str = Query(..., min_length=2, max_length=80),
+    away: str = Query(..., min_length=2, max_length=80),
+    competition_code: str | None = Query(default=None, max_length=10),
+):
+    """Detailed statistics (possession, shots, corners, goal timeline) for a
+    played match — best effort via the public stats source."""
+    return await fetch_match_details(competition_code, date, home, away)
 
 
 def _player_modifier(absent_players: list, team_total_contribution: float = 1.0) -> float:

@@ -126,6 +126,7 @@ export interface RecentSummary {
   goals_against: number
   avg_goals_for: number
   avg_goals_against: number
+  over_15_pct: number
   over_25_pct: number
   btts_pct: number
   clean_sheets: number
@@ -148,6 +149,55 @@ export interface RecentForm {
   summary: RecentSummary
   matches: RecentMatch[]
   upcoming: UpcomingTeamMatch[]
+}
+
+export interface H2HMatch {
+  match_id: number
+  date: string
+  competition: string | null
+  competition_code: string | null
+  home_api_id: number
+  home_name: string
+  home_crest: string | null
+  away_api_id: number
+  away_name: string
+  away_crest: string | null
+  home_goals: number
+  away_goals: number
+}
+
+export interface GoalEvent {
+  minute: string
+  side: 'home' | 'away'
+  player: string | null
+  text: string
+}
+
+export interface StatLabel {
+  key: string
+  label: string
+  suffix: string
+}
+
+export interface MatchDetails {
+  found: boolean
+  reason: string | null
+  source: string | null
+  stat_labels: StatLabel[]
+  home_stats: Record<string, string | null>
+  away_stats: Record<string, string | null>
+  goals: GoalEvent[]
+}
+
+/** Referência mínima de uma partida jogada, para abrir o modal de detalhes. */
+export interface MatchRef {
+  date: string
+  competition: string | null
+  competition_code: string | null
+  home_name: string
+  away_name: string
+  home_goals: number
+  away_goals: number
 }
 
 export interface TeamSearchResult {

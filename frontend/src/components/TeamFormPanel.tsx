@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, CalendarClock, Home, Plane } from 'lucide-react'
-import type { RecentForm as RecentFormData, RecentMatch, UpcomingTeamMatch } from '../types'
+import { AlertCircle, BarChart3, CalendarClock, Home, Plane } from 'lucide-react'
+import type { MatchRef, RecentForm as RecentFormData, RecentMatch, UpcomingTeamMatch } from '../types'
 import { teamsApi } from '../lib/api'
+import MatchDetailModal from './MatchDetailModal'
 import Spinner from './Spinner'
 import Tooltip from './Tooltip'
 
@@ -12,6 +13,8 @@ export type TeamSource =
 interface Props {
   source: TeamSource
   name: string
+  /** Nome real do time para consultas (quando `name` é um título de seção). */
+  queryName?: string
   /** Quantos jogos finalizados buscar (padrão 6). */
   limit?: number
   /** Busca e exibe também os próximos jogos do time. */
@@ -47,28 +50,32 @@ export function FormStreak({ form }: { form: string }) {
 function MiniStat({ label, value, tip }: { label: string; value: string; tip: string }) {
   return (
     <Tooltip content={tip}>
-      <div className="bg-surface-900/50 rounded-lg px-2.5 py-2 cursor-help min-w-0">
+      <div className="bg-surface-900/50 rounded-lg px-1.5 py-2 cursor-help min-w-0 text-center">
         <div className="text-[10px] uppercase tracking-wide text-surface-400 leading-tight truncate">{label}</div>
-        <div className="text-[13px] font-mono font-bold text-white mt-0.5 tabular-nums truncate">{value}</div>
+        <div className="text-xs font-mono font-bold text-white mt-0.5 tabular-nums">{value}</div>
       </div>
     </Tooltip>
   )
 }
 
-function MatchRow({ m }: { m: RecentMatch }) {
+function MatchRow({ m, onOpen }: { m: RecentMatch; onOpen: () => void }) {
   const date = new Date(m.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   return (
-    <div className="flex items-center gap-2 py-1.5 text-sm">
+    <button
+      onClick={onOpen}
+      title="Ver estatísticas da partida"
+      className="w-full flex items-center gap-2 py-1.5 text-sm text-left rounded-lg
+                 hover:bg-surface-700/60 transition-colors px-1 -mx-1 group"
+    >
       <span className="text-[11px] text-surface-400 w-10 flex-shrink-0 tabular-nums">{date}</span>
-      <Tooltip content={m.is_home ? 'Em casa' : 'Fora'}>
-        {m.is_home
-          ? <Home size={12} className="text-surface-400 flex-shrink-0" />
-          : <Plane size={12} className="text-surface-400 flex-shrink-0" />}
-      </Tooltip>
+      {m.is_home
+        ? <Home size={12} className="text-surface-400 flex-shrink-0" />
+        : <Plane size={12} className="text-surface-400 flex-shrink-0" />}
       {m.opponent_crest && (
         <img src={m.opponent_crest} alt="" className="w-4 h-4 object-contain flex-shrink-0" />
       )}
       <span className="text-surface-200 truncate flex-1 min-w-0">{m.opponent}</span>
+      <BarChart3 size={12} className="text-surface-500 group-hover:text-brand-400 transition-colors flex-shrink-0" />
       {m.competition_code && (
         <span className="hidden sm:inline text-[10px] text-surface-400 bg-surface-700 px-1.5 py-0.5 rounded flex-shrink-0">
           {m.competition_code}
@@ -84,7 +91,7 @@ function MatchRow({ m }: { m: RecentMatch }) {
       >
         {m.result}
       </span>
-    </div>
+    </button>
   )
 }
 
@@ -110,12 +117,26 @@ function UpcomingRow({ m }: { m: UpcomingTeamMatch }) {
   )
 }
 
-export default function TeamFormPanel({ source, name, limit = 6, withUpcoming = false, bare = false }: Props) {
+export default function TeamFormPanel({ source, name, queryName, limit = 6, withUpcoming = false, bare = false }: Props) {
   const [data, setData] = useState<RecentFormData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
+  const [detail, setDetail] = useState<MatchRef | null>(null)
 
+  const teamName = queryName ?? name
   const sourceKey = source.kind === 'db' ? `db:${source.id}` : `api:${source.apiId}`
+
+  function openDetail(m: RecentMatch) {
+    setDetail({
+      date: m.date,
+      competition: m.competition,
+      competition_code: m.competition_code,
+      home_name: m.is_home ? teamName : m.opponent,
+      away_name: m.is_home ? m.opponent : teamName,
+      home_goals: m.is_home ? m.goals_for : m.goals_against,
+      away_goals: m.is_home ? m.goals_against : m.goals_for,
+    })
+  }
 
   useEffect(() => {
     let alive = true
@@ -157,10 +178,11 @@ export default function TeamFormPanel({ source, name, limit = 6, withUpcoming = 
         <>
           {data.summary.played > 0 ? (
             <>
-              <div className="grid grid-cols-4 gap-1.5">
+              <div className="grid grid-cols-5 gap-1.5">
                 <MiniStat label="PPG" value={data.summary.ppg.toFixed(2)} tip="Pontos por jogo no recorte recente" />
                 <MiniStat label="Gols" value={`${data.summary.avg_goals_for.toFixed(1)}/${data.summary.avg_goals_against.toFixed(1)}`} tip="Média de gols marcados / sofridos por jogo" />
-                <MiniStat label="O2.5" value={`${data.summary.over_25_pct}%`} tip="% de jogos com mais de 2.5 gols" />
+                <MiniStat label="O1.5" value={`${data.summary.over_15_pct}%`} tip="% de jogos com mais de 1.5 gols (2 ou mais)" />
+                <MiniStat label="O2.5" value={`${data.summary.over_25_pct}%`} tip="% de jogos com mais de 2.5 gols (3 ou mais)" />
                 <MiniStat label="BTTS" value={`${data.summary.btts_pct}%`} tip="% de jogos em que ambos marcaram" />
               </div>
 
@@ -173,7 +195,9 @@ export default function TeamFormPanel({ source, name, limit = 6, withUpcoming = 
               </div>
 
               <div className="border-t border-surface-600 pt-1 divide-y divide-surface-600/50">
-                {data.matches.map(m => <MatchRow key={m.match_id} m={m} />)}
+                {data.matches.map(m => (
+                  <MatchRow key={m.match_id} m={m} onOpen={() => openDetail(m)} />
+                ))}
               </div>
             </>
           ) : (
@@ -196,6 +220,8 @@ export default function TeamFormPanel({ source, name, limit = 6, withUpcoming = 
           )}
         </>
       )}
+
+      {detail && <MatchDetailModal match={detail} onClose={() => setDetail(null)} />}
     </div>
   )
 }

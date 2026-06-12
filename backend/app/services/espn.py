@@ -1,0 +1,201 @@
+"""
+Match statistics via ESPN's public site API.
+
+The primary provider (football-data.org free tier) exposes no per-match
+statistics — no possession, shots, corners or goal timeline. ESPN's public
+JSON endpoints carry all of that for the leagues we cover, keyed by their own
+event ids, so we locate the event by (league, date, team names) and then read
+its summary. Best-effort by design: when a match can't be matched we return
+found=False instead of failing the request.
+"""
+import json
+import logging
+import time
+import unicodedata
+from datetime import datetime, timedelta
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer"
+
+# football-data.org competition code -> ESPN league slug
+COMP_TO_ESPN: dict[str, str] = {
+    "BSA": "bra.1",
+    "PL":  "eng.1",
+    "PD":  "esp.1",
+    "SA":  "ita.1",
+    "BL1": "ger.1",
+    "FL1": "fra.1",
+    "PPL": "por.1",
+    "DED": "ned.1",
+    "WC":  "fifa.world",
+    "CL":  "uefa.champions",
+    "EL":  "uefa.europa",
+    "CLI": "conmebol.libertadores",
+    "ELC": "eng.2",
+    "FAC": "eng.fa",
+    "CDR": "esp.copa_del_rey",
+    "DFB": "ger.dfb_pokal",
+    "CIT": "ita.coppa_italia",
+    "CDF": "fra.coupe_de_france",
+}
+
+# Which boxscore statistics we surface, in display order.
+_STATS = [
+    ("possessionPct",  "Posse de bola", "%"),
+    ("totalShots",     "Finalizações",  ""),
+    ("shotsOnTarget",  "Chutes ao gol", ""),
+    ("wonCorners",     "Escanteios",    ""),
+    ("foulsCommitted", "Faltas",        ""),
+    ("yellowCards",    "Cartões amarelos", ""),
+    ("redCards",       "Cartões vermelhos", ""),
+    ("saves",          "Defesas do goleiro", ""),
+]
+
+_CACHE_TTL = 24 * 3600.0  # finished-match stats never change
+_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _norm_tokens(name: str) -> set[str]:
+    """Accent-folded significant tokens of a team name, for fuzzy matching."""
+    folded = "".join(
+        c for c in unicodedata.normalize("NFD", name.lower())
+        if unicodedata.category(c) != "Mn"
+    )
+    stop = {
+        "fc", "ec", "sc", "cr", "ca", "cd", "afc", "cf", "ac", "as", "ss",
+        "club", "clube", "de", "do", "da", "e", "esporte", "futebol",
+        "regatas", "the", "if", "fk", "sv", "vfb", "vfl", "tsg", "rb", "1",
+    }
+    return {t for t in folded.replace("-", " ").split() if t and t not in stop}
+
+
+def _teams_match(a: str, b: str) -> bool:
+    ta, tb = _norm_tokens(a), _norm_tokens(b)
+    if not ta or not tb:
+        return False
+    return bool(ta & tb)
+
+
+async def _get(client: httpx.AsyncClient, url: str, params: dict | None = None) -> dict:
+    r = await client.get(url, params=params or {}, timeout=15.0)
+    r.raise_for_status()
+    return r.json()
+
+
+async def _find_event(
+    client: httpx.AsyncClient, slug: str, match_date: datetime,
+    home_name: str, away_name: str,
+) -> dict | None:
+    """Locate the ESPN event for a match. Tries the UTC date and its
+    neighbours, since ESPN groups scoreboards by US-local dates.
+
+    Providers disagree on naming (football-data "CA Mineiro" vs ESPN
+    "Atlético-MG"), so requiring both sides to match is too strict. A team
+    plays at most once per day in a competition, so a single candidate event
+    where at least one side matches is already a reliable identification."""
+    for delta in (0, -1, 1):
+        d = (match_date + timedelta(days=delta)).strftime("%Y%m%d")
+        try:
+            data = await _get(client, f"{_BASE}/{slug}/scoreboard", {"dates": d})
+        except httpx.HTTPError:
+            continue
+
+        candidates: list[tuple[int, dict]] = []
+        for ev in data.get("events", []):
+            comps = (ev.get("competitions") or [{}])[0].get("competitors", [])
+            ev_home = next((c for c in comps if c.get("homeAway") == "home"), None)
+            ev_away = next((c for c in comps if c.get("homeAway") == "away"), None)
+            if not ev_home or not ev_away:
+                continue
+            hn = ev_home["team"].get("displayName", "")
+            an = ev_away["team"].get("displayName", "")
+            score = int(_teams_match(home_name, hn)) + int(_teams_match(away_name, an))
+            if score > 0:
+                candidates.append((score, {"id": ev["id"], "home": hn, "away": an}))
+
+        exact = [ev for s, ev in candidates if s == 2]
+        if exact:
+            return exact[0]
+        if len(candidates) == 1:
+            return candidates[0][1]
+    return None
+
+
+def _parse_summary(summary: dict, espn_home: str, espn_away: str) -> dict:
+    teams = summary.get("boxscore", {}).get("teams", [])
+
+    def _stats_for(side_name: str) -> dict:
+        for t in teams:
+            if _teams_match(side_name, t.get("team", {}).get("displayName", "")):
+                raw = {s["name"]: s.get("displayValue") for s in t.get("statistics", [])}
+                return {key: raw.get(key) for key, _, _ in _STATS}
+        return {key: None for key, _, _ in _STATS}
+
+    goals = []
+    for e in summary.get("keyEvents", []):
+        type_text = (e.get("type") or {}).get("text", "")
+        is_goal = bool(e.get("scoringPlay")) or "goal" in type_text.lower()
+        if not is_goal:
+            continue
+        team_name = (e.get("team") or {}).get("displayName", "")
+        side = "home" if _teams_match(team_name, espn_home) else "away"
+        players = [p.get("athlete", {}).get("displayName") for p in e.get("participants", [])]
+        goals.append({
+            "minute": (e.get("clock") or {}).get("displayValue", ""),
+            "side": side,
+            "player": players[0] if players else None,
+            "text": (e.get("text") or "")[:140],
+        })
+
+    return {
+        "found": True,
+        "source": "ESPN",
+        "stat_labels": [{"key": k, "label": lbl, "suffix": sfx} for k, lbl, sfx in _STATS],
+        "home_stats": _stats_for(espn_home),
+        "away_stats": _stats_for(espn_away),
+        "goals": goals,
+    }
+
+
+async def fetch_match_details(
+    competition_code: str | None, match_date_iso: str,
+    home_name: str, away_name: str,
+) -> dict:
+    """Possession/shots/corners/cards + goal timeline for a played match.
+    Returns {found: False, reason} when the competition isn't mapped or the
+    event can't be located."""
+    slug = COMP_TO_ESPN.get((competition_code or "").upper())
+    if not slug:
+        return {"found": False, "reason": f"Competição '{competition_code}' sem cobertura de estatísticas."}
+
+    cache_key = json.dumps([slug, match_date_iso[:10], sorted(_norm_tokens(home_name) | _norm_tokens(away_name))])
+    hit = _cache.get(cache_key)
+    if hit and time.monotonic() - hit[0] < _CACHE_TTL:
+        return hit[1]
+
+    try:
+        match_date = datetime.fromisoformat(match_date_iso.replace("Z", "+00:00"))
+    except ValueError:
+        return {"found": False, "reason": "Data da partida inválida."}
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        ev = await _find_event(client, slug, match_date, home_name, away_name)
+        if not ev:
+            result = {"found": False, "reason": "Partida não localizada na fonte de estatísticas."}
+            _cache[cache_key] = (time.monotonic(), result)
+            return result
+        try:
+            summary = await _get(client, f"{_BASE}/{slug}/summary", {"event": ev["id"]})
+        except httpx.HTTPError as exc:
+            logger.warning("ESPN summary failed for event %s: %s", ev["id"], exc)
+            return {"found": False, "reason": "Fonte de estatísticas indisponível agora."}
+
+    result = _parse_summary(summary, ev["home"], ev["away"])
+    _cache[cache_key] = (time.monotonic(), result)
+    if len(_cache) > 300:
+        for k, _ in sorted(_cache.items(), key=lambda kv: kv[1][0])[:60]:
+            _cache.pop(k, None)
+    return result

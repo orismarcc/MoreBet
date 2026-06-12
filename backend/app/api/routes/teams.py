@@ -62,6 +62,7 @@ class RecentSummary(BaseModel):
     goals_against: int
     avg_goals_for: float
     avg_goals_against: float
+    over_15_pct: int
     over_25_pct: int
     btts_pct: int
     clean_sheets: int
