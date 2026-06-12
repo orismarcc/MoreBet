@@ -2,7 +2,10 @@ from dataclasses import dataclass, field
 
 from app.core.poisson import compute_distribution
 
-MAX_GOALS = 8
+# 10 keeps the residual-mass bucket (P(>max) lumped into the last cell)
+# negligible even for blowout-level lambdas (~5+), where 8 visibly distorted
+# the top-scores list.
+MAX_GOALS = 10
 
 # Dixon-Coles low-score correlation parameter. Negative ρ pulls probability
 # from (1,0) and (0,1) into (0,0) and (1,1) — matching the well-known

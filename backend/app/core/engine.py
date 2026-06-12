@@ -7,8 +7,10 @@ from app.core.strength import (
     LeagueAverages,
     TeamStrength,
     calc_lambda,
+    calc_team_strength,
     calc_xg_lambda,
     blend_lambda,
+    shrink_avg,
 )
 from app.core.matrix import ScoreMatrix
 from app.core.markets import MatchMarkets, calc_markets
@@ -30,6 +32,11 @@ class TeamInput:
     # Player impact modifiers (1.0 = no change)
     home_player_modifier: float = 1.0
     away_player_modifier: float = 1.0
+    # Sample sizes behind the averages. When provided, the averages are
+    # shrunk toward the league mean (regression to the mean) before the
+    # strength calculation; when None, averages are used as-is.
+    home_played: int | None = None
+    away_played: int | None = None
 
 
 @dataclass
@@ -47,18 +54,24 @@ def analyse_match(
     league: LeagueAverages,
     xg_weight: float = 0.4,
 ) -> MatchAnalysis:
-    # ── Home attack strength ────────────────────────────────────────────────
-    from app.core.strength import calc_team_strength
+    # ── Regression to the mean ──────────────────────────────────────────────
+    # An average home team scores MGM and concedes MGV (and vice-versa for the
+    # away side), so each rate shrinks toward its matching league baseline.
+    home_scored = shrink_avg(home.home_goals_scored_avg, home.home_played, league.home_goals_avg)
+    home_conceded = shrink_avg(home.home_goals_conceded_avg, home.home_played, league.away_goals_avg)
+    away_scored = shrink_avg(home.away_goals_scored_avg, home.away_played, league.away_goals_avg)
+    away_conceded = shrink_avg(home.away_goals_conceded_avg, home.away_played, league.home_goals_avg)
 
+    # ── Home attack strength ────────────────────────────────────────────────
     home_strength = calc_team_strength(
-        goals_scored_avg=home.home_goals_scored_avg,
-        goals_conceded_avg=home.home_goals_conceded_avg,
+        goals_scored_avg=home_scored,
+        goals_conceded_avg=home_conceded,
         league_scored_avg=league.home_goals_avg,
         league_conceded_avg=league.away_goals_avg,
     )
     away_strength = calc_team_strength(
-        goals_scored_avg=home.away_goals_scored_avg,
-        goals_conceded_avg=home.away_goals_conceded_avg,
+        goals_scored_avg=away_scored,
+        goals_conceded_avg=away_conceded,
         league_scored_avg=league.away_goals_avg,
         league_conceded_avg=league.home_goals_avg,
     )
@@ -81,21 +94,27 @@ def analyse_match(
     xg_lambda_home: float | None = None
     xg_lambda_away: float | None = None
 
-    if (
-        home.home_xg_scored_avg is not None
-        and home.away_xg_conceded_avg is not None
-        and league.home_xg_avg is not None
+    # All four team xG rates AND both league xG baselines must be present —
+    # a partial set would zero out one side's strength and silently skew the
+    # blended lambdas. Missing anything → goals-only model.
+    if None not in (
+        home.home_xg_scored_avg,
+        home.home_xg_conceded_avg,
+        home.away_xg_scored_avg,
+        home.away_xg_conceded_avg,
+        league.home_xg_avg,
+        league.away_xg_avg,
     ):
         home_xg_strength = calc_team_strength(
-            goals_scored_avg=home.home_xg_scored_avg,
-            goals_conceded_avg=home.home_xg_conceded_avg or 0,
+            goals_scored_avg=shrink_avg(home.home_xg_scored_avg, home.home_played, league.home_xg_avg),
+            goals_conceded_avg=shrink_avg(home.home_xg_conceded_avg, home.home_played, league.away_xg_avg),
             league_scored_avg=league.home_xg_avg,
-            league_conceded_avg=league.away_xg_avg or league.home_xg_avg,
+            league_conceded_avg=league.away_xg_avg,
         )
         away_xg_strength = calc_team_strength(
-            goals_scored_avg=home.away_xg_scored_avg or 0,
-            goals_conceded_avg=home.away_xg_conceded_avg,
-            league_scored_avg=league.away_xg_avg or league.home_xg_avg,
+            goals_scored_avg=shrink_avg(home.away_xg_scored_avg, home.away_played, league.away_xg_avg),
+            goals_conceded_avg=shrink_avg(home.away_xg_conceded_avg, home.away_played, league.home_xg_avg),
+            league_scored_avg=league.away_xg_avg,
             league_conceded_avg=league.home_xg_avg,
         )
         xg_lambda_home = calc_xg_lambda(
@@ -107,7 +126,7 @@ def analyse_match(
         xg_lambda_away = calc_xg_lambda(
             away_xg_strength.attack,
             home_xg_strength.defense,
-            league.away_xg_avg or league.home_xg_avg,
+            league.away_xg_avg,
             home.away_player_modifier,
         )
 

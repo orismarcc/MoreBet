@@ -33,6 +33,9 @@ class Settings(BaseSettings):
 
     class Config:
         env_file = ".env"
+        # Stale/legacy keys in .env (e.g. from the old API-Football provider)
+        # must not crash the app or the test suite.
+        extra = "ignore"
 
 
 settings = Settings()

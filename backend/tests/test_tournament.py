@@ -2,6 +2,7 @@
 import pytest
 
 from app.services.football_data import (
+    FORM_DECAY,
     _team_neutral_averages,
     fetch_league_with_form,
     TOURNAMENT_LEAGUES,
@@ -23,8 +24,12 @@ def test_neutral_averages_mirror_both_splits():
     ]
     avg = _team_neutral_averages(matches, last_n=30)
     assert avg["home_played"] == avg["away_played"] == 3
-    assert avg["home_goals_scored"] == avg["away_goals_scored"] == pytest.approx(2.0)
-    assert avg["home_goals_conceded"] == avg["away_goals_conceded"] == pytest.approx(1.0)
+    # Averages are decay-weighted (newest match weighs 1.0, older ones less).
+    w = [FORM_DECAY ** 2, FORM_DECAY, 1.0]
+    exp_scored = (2 * w[0] + 1 * w[1] + 3 * w[2]) / sum(w)
+    exp_conceded = (0 * w[0] + 1 * w[1] + 2 * w[2]) / sum(w)
+    assert avg["home_goals_scored"] == avg["away_goals_scored"] == pytest.approx(exp_scored)
+    assert avg["home_goals_conceded"] == avg["away_goals_conceded"] == pytest.approx(exp_conceded)
 
 
 def _match(mid, home, away, status="FINISHED", gh=None, ga=None, date="2022-12-01T00:00:00Z"):
@@ -94,9 +99,11 @@ async def test_tournament_prev_edition_fallback_and_debutant():
     # All three drawn teams are participants
     assert set(by_id) == {10, 20, 30}
 
-    # Team 10: scored 2 and 3 across two matches → 2.5 mirrored on both splits
-    assert by_id[10]["home_goals_scored"] == pytest.approx(2.5)
-    assert by_id[10]["away_goals_scored"] == pytest.approx(2.5)
+    # Team 10: scored 2 (older) and 3 (newer) — decay-weighted mean mirrored
+    # on both splits.
+    expected = (2 * FORM_DECAY + 3) / (FORM_DECAY + 1)
+    assert by_id[10]["home_goals_scored"] == pytest.approx(expected)
+    assert by_id[10]["away_goals_scored"] == pytest.approx(expected)
 
     # Debutant (30) gets the field-average fallback, not zeros
     assert by_id[30]["home_goals_scored"] > 0

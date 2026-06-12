@@ -15,6 +15,34 @@ class TeamStrength:
     defense: float  # força de defesa normalizada
 
 
+# Bayesian prior weight: a team's average only fully "speaks for itself" after
+# many games. With k=6, a team with 6 games sits halfway between its own rate
+# and the league average; with 18 games its own rate dominates (75%). Chosen so
+# the most defensive realistic matchup prices 0-0 under ~25%, in line with how
+# bookmakers cap that scoreline.
+SHRINKAGE_GAMES = 6.0
+
+
+def shrink_avg(
+    team_avg: float,
+    games_played: int | None,
+    league_avg: float,
+    k: float = SHRINKAGE_GAMES,
+) -> float:
+    """
+    Shrink a team's per-game average toward the league average (regression to
+    the mean). Counters the multiplicative model's overconfidence at the
+    extremes: small samples and outlier rates get pulled toward league-typical
+    values, larger samples keep most of their own signal.
+
+    Returns team_avg untouched when games_played is unknown (None) so callers
+    without sample sizes keep the historical behaviour.
+    """
+    if games_played is None or league_avg <= 0:
+        return team_avg
+    return (team_avg * games_played + league_avg * k) / (games_played + k)
+
+
 def calc_team_strength(
     goals_scored_avg: float,
     goals_conceded_avg: float,

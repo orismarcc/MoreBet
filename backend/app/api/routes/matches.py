@@ -144,6 +144,8 @@ def calculate_match(payload: CalculateMatchIn, db: Session = Depends(get_db)):
         away_xg_conceded_avg=away_team.away_xg_conceded,
         home_player_modifier=home_modifier,
         away_player_modifier=away_modifier,
+        home_played=home_team.home_played,
+        away_played=away_team.away_played,
     )
 
     league_avgs = LeagueAverages(

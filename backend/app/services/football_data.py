@@ -120,7 +120,23 @@ SUPPORTED_LEAGUES: dict[int, tuple[str, str]] = {
 
 # How many recent matches define a team's "current form".
 FORM_WINDOW = 30
+# Exponential decay per match: the newest game weighs 1.0, the one before
+# 0.95, then 0.95², … With a 30-game window the effective sample is ~16 games,
+# so recent form dominates without throwing away the season's baseline.
+FORM_DECAY = 0.95
 _FINISHED = "FINISHED"
+
+
+def _decay_weights(n: int, decay: float = FORM_DECAY) -> list[float]:
+    """Weights for a chronologically-sorted (oldest→newest) list of n matches:
+    newest gets 1.0, each step back multiplies by `decay`."""
+    return [decay ** (n - 1 - i) for i in range(n)]
+
+
+def _weighted_avg(pairs: list[tuple[float, float]]) -> float:
+    """Mean of (value, weight) pairs; 0.0 when there is no weight."""
+    total_w = sum(w for _, w in pairs)
+    return sum(v * w for v, w in pairs) / total_w if total_w > 0 else 0.0
 
 
 def _headers() -> dict[str, str]:
@@ -153,13 +169,15 @@ async def _get_matches(
 
 def _team_form_averages(matches: list[dict], last_n: int) -> dict:
     """From a chronologically-sorted (oldest→newest) list of a team's matches,
-    take the most recent `last_n` and compute home/away scoring averages."""
+    take the most recent `last_n` and compute exponentially-decayed home/away
+    scoring averages — recent games weigh more than old ones."""
     recent = matches[-last_n:]
-    home = [m for m in recent if m["is_home"]]
-    away = [m for m in recent if not m["is_home"]]
+    weights = _decay_weights(len(recent))
+    home = [(m, w) for m, w in zip(recent, weights) if m["is_home"]]
+    away = [(m, w) for m, w in zip(recent, weights) if not m["is_home"]]
 
-    def _avg(games: list[dict], key: str) -> float:
-        return sum(g[key] for g in games) / len(games) if games else 0.0
+    def _avg(games: list[tuple[dict, float]], key: str) -> float:
+        return _weighted_avg([(g[key], w) for g, w in games])
 
     return {
         "home_played": len(home),
@@ -173,11 +191,12 @@ def _team_form_averages(matches: list[dict], last_n: int) -> dict:
 
 def _team_neutral_averages(matches: list[dict], last_n: int) -> dict:
     """Tournament variant: venues are neutral, so compute one combined
-    scored/conceded average and mirror it into both home and away splits."""
+    (decay-weighted) scored/conceded average and mirror it into both splits."""
     recent = matches[-last_n:]
+    weights = _decay_weights(len(recent))
     n = len(recent)
-    scored = sum(m["scored"] for m in recent) / n if n else 0.0
-    conceded = sum(m["conceded"] for m in recent) / n if n else 0.0
+    scored = _weighted_avg([(m["scored"], w) for m, w in zip(recent, weights)])
+    conceded = _weighted_avg([(m["conceded"], w) for m, w in zip(recent, weights)])
     return {
         "home_played": n,
         "home_goals_scored": scored,
