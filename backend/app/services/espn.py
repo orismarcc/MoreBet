@@ -76,11 +76,19 @@ def _teams_match(a: str, b: str) -> bool:
     ta, tb = _norm_tokens(a), _norm_tokens(b)
     if not ta or not tb:
         return False
-    return bool(ta & tb)
+    if ta & tb:
+        return True
+    # Prefix tolerance for naming variants across sources
+    # (e.g. "Czechia" vs "Czech Republic", "Bosnia-Herzegovina" variants).
+    for x in ta:
+        for y in tb:
+            if len(x) >= 4 and len(y) >= 4 and (x.startswith(y) or y.startswith(x)):
+                return True
+    return False
 
 
 async def _get(client: httpx.AsyncClient, url: str, params: dict | None = None) -> dict:
-    r = await client.get(url, params=params or {}, timeout=15.0)
+    r = await client.get(url, params=params or {})
     r.raise_for_status()
     return r.json()
 
@@ -165,9 +173,12 @@ async def fetch_match_details(
     home_name: str, away_name: str,
 ) -> dict:
     """Possession/shots/corners/cards + goal timeline for a played match.
+    `competition_code` may be a football-data code (mapped) or already an
+    ESPN league slug (contains a dot, e.g. "fifa.friendly").
     Returns {found: False, reason} when the competition isn't mapped or the
     event can't be located."""
-    slug = COMP_TO_ESPN.get((competition_code or "").upper())
+    raw_code = (competition_code or "").strip()
+    slug = raw_code.lower() if "." in raw_code else COMP_TO_ESPN.get(raw_code.upper())
     if not slug:
         return {"found": False, "reason": f"Competição '{competition_code}' sem cobertura de estatísticas."}
 
@@ -199,3 +210,106 @@ async def fetch_match_details(
         for k, _ in sorted(_cache.items(), key=lambda kv: kv[1][0])[:60]:
             _cache.pop(k, None)
     return result
+
+
+# ── National teams (World Cup bootstrap & recent internationals) ─────────────
+# football-data's free tier hides everything a national team played outside
+# the World Cup itself, so before the first WC matches finish there is zero
+# data to model with. ESPN's public schedule endpoint exposes each nation's
+# last ~25 internationals (friendlies + qualifiers) with scores — we use it to
+# seed pre-tournament strength and to show recent form for seleções.
+
+_WC_MAP_TTL = 24 * 3600.0
+_wc_map_cache: dict = {"ts": 0.0, "teams": []}
+
+
+async def fetch_wc_espn_team_map(client: httpx.AsyncClient) -> list[dict]:
+    """[{espn_id, name}] for every team in the current World Cup, from the
+    tournament scoreboard (covers a wide date window). Cached 24h."""
+    now = time.monotonic()
+    if _wc_map_cache["teams"] and now - _wc_map_cache["ts"] < _WC_MAP_TTL:
+        return _wc_map_cache["teams"]
+    today = datetime.utcnow().date()
+    window = (
+        f"{(today - timedelta(days=10)).strftime('%Y%m%d')}"
+        f"-{(today + timedelta(days=45)).strftime('%Y%m%d')}"
+    )
+    data = await _get(client, f"{_BASE}/fifa.world/scoreboard", {"dates": window})
+    seen: dict[str, str] = {}
+    for ev in data.get("events", []):
+        for c in (ev.get("competitions") or [{}])[0].get("competitors", []):
+            t = c.get("team") or {}
+            if t.get("id"):
+                seen[str(t["id"])] = t.get("displayName", "")
+    teams = [{"espn_id": k, "name": v} for k, v in seen.items()]
+    if teams:
+        _wc_map_cache["ts"] = now
+        _wc_map_cache["teams"] = teams
+    return teams
+
+
+async def fetch_team_intl_results(
+    client: httpx.AsyncClient, espn_id: str, limit: int = 12
+) -> list[dict]:
+    """A national team's last finished internationals (any competition),
+    newest first, shaped like our RecentMatch rows. competition_code carries
+    the ESPN league slug so the stats modal works directly. Cached 6h."""
+    cache_key = f"intl:{espn_id}"
+    hit = _cache.get(cache_key)
+    if hit and time.monotonic() - hit[0] < 6 * 3600.0:
+        return hit[1][:limit]
+
+    data = await _get(client, f"{_BASE}/all/teams/{espn_id}/schedule")
+    out: list[dict] = []
+    for ev in data.get("events", []):
+        comp = (ev.get("competitions") or [{}])[0]
+        status = ((comp.get("status") or {}).get("type") or {})
+        if not status.get("completed"):
+            continue
+        comps = comp.get("competitors", [])
+        me = next((c for c in comps if str(c.get("team", {}).get("id")) == str(espn_id)), None)
+        opp = next((c for c in comps if str(c.get("team", {}).get("id")) != str(espn_id)), None)
+        if not me or not opp:
+            continue
+        gf = (me.get("score") or {}).get("value")
+        ga = (opp.get("score") or {}).get("value")
+        if gf is None or ga is None:
+            continue
+        gf, ga = int(gf), int(ga)
+        league = ev.get("league") or {}
+        logos = (opp.get("team") or {}).get("logos") or []
+        out.append({
+            "match_id": int(ev.get("id") or 0),
+            "date": ev.get("date", ""),
+            "competition": league.get("name"),
+            "competition_code": league.get("slug"),  # ESPN slug — modal-ready
+            "competition_emblem": None,
+            "is_home": me.get("homeAway") == "home",
+            "opponent": (opp.get("team") or {}).get("displayName", ""),
+            "opponent_short": (opp.get("team") or {}).get("abbreviation"),
+            "opponent_crest": logos[0].get("href") if logos else None,
+            "goals_for": gf,
+            "goals_against": ga,
+            "result": "W" if gf > ga else ("D" if gf == ga else "L"),
+        })
+    out.sort(key=lambda m: m["date"], reverse=True)
+    _cache[cache_key] = (time.monotonic(), out)
+    return out[:limit]
+
+
+async def recent_internationals_by_name(
+    client: httpx.AsyncClient, team_name: str, limit: int = 10
+) -> list[dict] | None:
+    """Recent internationals for a WC nation located by name; None when the
+    name can't be mapped to an ESPN team."""
+    try:
+        teams = await fetch_wc_espn_team_map(client)
+    except httpx.HTTPError:
+        return None
+    match = next((t for t in teams if _teams_match(team_name, t["name"])), None)
+    if not match:
+        return None
+    try:
+        return await fetch_team_intl_results(client, match["espn_id"], limit)
+    except httpx.HTTPError:
+        return None

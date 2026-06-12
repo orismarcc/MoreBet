@@ -58,10 +58,10 @@ export default function TeamExplorer({ onAnalyse }: ExplorerProps) {
     }, 350)
   }, [query])
 
-  // Stats do clube ao abrir o detalhe
+  // Stats do modelo ao abrir o detalhe (qualquer time presente no banco)
   useEffect(() => {
     setClubStats(null)
-    if (selected?.kind === 'club' && selected.db_id) {
+    if (selected?.db_id) {
       teamsApi.get(selected.db_id).then(setClubStats).catch(() => setClubStats(null))
     }
   }, [selected])
@@ -98,8 +98,8 @@ export default function TeamExplorer({ onAnalyse }: ExplorerProps) {
           </div>
         </div>
 
-        {/* Stats do modelo (apenas clubes — vêm do banco) */}
-        {selected.kind === 'club' && clubStats && (
+        {/* Stats do modelo (qualquer time presente no banco) */}
+        {clubStats && selected.kind === 'club' && (
           <div>
             <p className="text-xs text-surface-400 mb-2 px-0.5">
               Médias usadas no modelo · forma recente (até 30 jogos)
@@ -117,10 +117,24 @@ export default function TeamExplorer({ onAnalyse }: ExplorerProps) {
           </div>
         )}
 
-        {selected.kind === 'national' && (
+        {clubStats && selected.kind === 'national' && (
+          <div>
+            <p className="text-xs text-surface-400 mb-2 px-0.5">
+              Médias usadas no modelo · estádio neutro, base nos últimos jogos internacionais
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <StatBox label="Gols marcados / jogo" value={clubStats.home_goals_scored.toFixed(2)}
+                tip="Média de gols marcados por jogo nos últimos internacionais (campo neutro)" />
+              <StatBox label="Gols sofridos / jogo" value={clubStats.home_goals_conceded.toFixed(2)}
+                tip="Média de gols sofridos por jogo nos últimos internacionais (campo neutro)" />
+            </div>
+          </div>
+        )}
+
+        {selected.kind === 'national' && !selected.db_id && (
           <p className="text-xs text-surface-400 px-0.5">
-            Seleções não participam do cálculo de odds enquanto a Copa não tem jogos
-            finalizados — abaixo, o histórico disponível e a agenda do time.
+            Esta seleção ainda não entrou no modelo — a análise ativa automaticamente
+            assim que houver dados da Copa. Abaixo, os últimos jogos e a agenda.
           </p>
         )}
 
@@ -128,7 +142,7 @@ export default function TeamExplorer({ onAnalyse }: ExplorerProps) {
         <div className="card">
           <TeamFormPanel
             bare
-            source={selected.kind === 'club' && selected.db_id
+            source={selected.db_id
               ? { kind: 'db', id: selected.db_id }
               : { kind: 'api', apiId: selected.api_id }}
             name="Últimos jogos"

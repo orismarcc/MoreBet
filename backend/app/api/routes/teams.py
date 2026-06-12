@@ -11,10 +11,12 @@ from app.models.orm import League, Team
 from app.models.schemas import TeamOut, PlayerOut
 from app.services.football_data import (
     FD_LEAGUES,
+    build_form_summary,
     fetch_team_recent_matches,
     fetch_team_upcoming_matches,
     fetch_wc_participants,
 )
+from app.services.espn import recent_internationals_by_name
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +114,9 @@ async def search_teams(
         if needle in _fold(team.name):
             club_api_ids.add(team.api_id)
             results.append(TeamSearchResult(
-                kind="club",
+                # National teams may live in the DB too (World Cup league) —
+                # keep the badge honest while still being analysable (db_id).
+                kind="national" if league.api_id == 1 else "club",
                 db_id=team.id,
                 api_id=team.api_id,
                 name=team.name,
@@ -157,9 +161,30 @@ def _league_hint(db: Session, api_id: int) -> str | None:
 
 async def _recent_payload(
     api_id: int, limit: int, include_upcoming: bool, league_hint: str | None = None,
+    display_name: str | None = None,
 ) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
         payload = await fetch_team_recent_matches(client, api_id, limit, league_hint)
+
+        # National teams: the primary provider hides everything outside the
+        # World Cup itself, so before/early in the tournament there are zero
+        # finished matches. Fall back to the nation's recent internationals
+        # (friendlies + qualifiers) from the public stats source.
+        if payload["summary"]["played"] == 0:
+            name = display_name
+            if not name:
+                try:
+                    participants = await fetch_wc_participants(client)
+                    name = next(
+                        (p["name"] for p in participants if p["api_id"] == api_id), None
+                    )
+                except httpx.HTTPError:
+                    name = None
+            if name:
+                intl = await recent_internationals_by_name(client, name, limit)
+                if intl:
+                    payload = {"summary": build_form_summary(intl), "matches": intl}
+
         if include_upcoming:
             try:
                 payload["upcoming"] = await fetch_team_upcoming_matches(
@@ -189,8 +214,12 @@ async def get_recent_by_api_id(
 ):
     """Recent form straight from the data provider, keyed by the provider's
     team id — used for national teams that have no row in our DB."""
+    db_team = db.query(Team).filter(Team.api_id == api_id).first()
     try:
-        return await _recent_payload(api_id, limit, upcoming, _league_hint(db, api_id))
+        return await _recent_payload(
+            api_id, limit, upcoming, _league_hint(db, api_id),
+            db_team.name if db_team else None,
+        )
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Data provider error: {e}")
 
@@ -232,7 +261,7 @@ async def get_team_recent(
         raise HTTPException(status_code=404, detail="Team not found")
     try:
         return await _recent_payload(
-            team.api_id, limit, upcoming, _league_hint(db, team.api_id)
+            team.api_id, limit, upcoming, _league_hint(db, team.api_id), team.name
         )
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Data provider error: {e}")

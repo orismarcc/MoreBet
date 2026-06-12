@@ -92,7 +92,7 @@ async def match_details(
     date: str = Query(..., description="ISO datetime of the match"),
     home: str = Query(..., min_length=2, max_length=80),
     away: str = Query(..., min_length=2, max_length=80),
-    competition_code: str | None = Query(default=None, max_length=10),
+    competition_code: str | None = Query(default=None, max_length=40),
 ):
     """Detailed statistics (possession, shots, corners, goal timeline) for a
     played match — best effort via the public stats source."""

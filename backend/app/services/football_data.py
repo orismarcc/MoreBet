@@ -188,6 +188,84 @@ def _team_neutral_averages(matches: list[dict], last_n: int) -> dict:
     }
 
 
+async def _bootstrap_tournament_from_internationals(
+    client: httpx.AsyncClient, league_id: int, name: str, country: str,
+    emblem: str | None,
+) -> tuple[dict, list[dict]] | None:
+    """Pre-tournament seeding: build each participant's neutral-venue scoring
+    averages from their last internationals (friendlies + qualifiers via
+    ESPN), mirrored into both home/away splits. Nations we can't map get the
+    field average. Returns None when nothing could be built."""
+    from app.services import espn as espn_svc
+
+    participants = await fetch_wc_participants(client)
+    if not participants:
+        return None
+    try:
+        espn_teams = await espn_svc.fetch_wc_espn_team_map(client)
+    except httpx.HTTPError:
+        return None
+
+    sem = asyncio.Semaphore(8)
+
+    async def _averages(p: dict) -> tuple[dict, tuple[float, float, int] | None]:
+        match = next(
+            (t for t in espn_teams if espn_svc._teams_match(p["name"], t["name"])),
+            None,
+        )
+        if not match:
+            return p, None
+        async with sem:
+            try:
+                results = await espn_svc.fetch_team_intl_results(
+                    client, match["espn_id"], limit=12
+                )
+            except httpx.HTTPError:
+                return p, None
+        if not results:
+            return p, None
+        n = len(results)
+        gf = sum(r["goals_for"] for r in results) / n
+        ga = sum(r["goals_against"] for r in results) / n
+        return p, (gf, ga, n)
+
+    per_team = await asyncio.gather(*(_averages(p) for p in participants))
+    with_data = [avg for _, avg in per_team if avg is not None]
+    if len(with_data) < len(participants) // 2:
+        return None  # too sparse to be meaningful
+    field_gf = sum(a[0] for a in with_data) / len(with_data)
+    field_ga = sum(a[1] for a in with_data) / len(with_data)
+
+    teams_list: list[dict] = []
+    for p, avg in per_team:
+        gf, ga, n = avg if avg is not None else (field_gf, field_ga, 0)
+        teams_list.append({
+            "api_id": p["api_id"],
+            "name": p["name"],
+            "short_name": p["short_name"],
+            "logo_url": p["crest"],
+            "home_played": n,
+            "home_goals_scored": gf,
+            "home_goals_conceded": ga,
+            "away_played": n,
+            "away_goals_scored": gf,
+            "away_goals_conceded": ga,
+        })
+
+    logger.info(
+        "tournament %s seeded from internationals: %d/%d nations with data",
+        name, len(with_data), len(participants),
+    )
+    league_dict = {
+        "api_id": league_id,
+        "name": name,
+        "country": country,
+        "season": date.today().year,
+        "logo_url": emblem,
+    }
+    return league_dict, teams_list
+
+
 async def fetch_league_with_form(
     client: httpx.AsyncClient, league_id: int, last_n: int = FORM_WINDOW
 ) -> tuple[dict, list[dict]]:
@@ -226,6 +304,24 @@ async def fetch_league_with_form(
 
     cur_finished = _finished(cur_matches)
     prev_finished = _finished(prev_matches)
+
+    if is_tournament:
+        # Tournaments: each nation's strength comes from its last ~12
+        # internationals (friendlies + qualifiers + the tournament itself, via
+        # ESPN). This both makes the OPENING matches analysable (the primary
+        # provider has zero national-team history) and gives a far richer
+        # sample than 1-3 group games mid-tournament. Falls through to the
+        # neutral in-tournament path only if the seeding source fails.
+        try:
+            seeded = await _bootstrap_tournament_from_internationals(
+                client, league_id, name, country, comp.get("emblem"),
+            )
+        except Exception as exc:  # seeding source down → in-tournament data
+            logger.warning("tournament seeding failed (%s) — using in-tournament data", exc)
+            seeded = None
+        if seeded is not None:
+            return seeded
+
     if not cur_finished and not (is_tournament and prev_finished):
         raise ValueError(
             f"League {league_id} ({code}): no finished matches in the current "
@@ -242,8 +338,11 @@ async def fetch_league_with_form(
     # status) so participants without a finished match yet still get name/crest.
     info_source = all_finished + (cur_matches if is_tournament else [])
     for m in info_source:
-        teams.setdefault(m["homeTeam"]["id"], m["homeTeam"])
-        teams.setdefault(m["awayTeam"]["id"], m["awayTeam"])
+        for side in ("homeTeam", "awayTeam"):
+            t = m[side]
+            # Knockout placeholders ("Winner of group A") carry null ids.
+            if t.get("id") and t.get("name"):
+                teams.setdefault(t["id"], t)
     for m in all_finished:
         ft = m["score"]["fullTime"]
         gh, ga = ft["home"], ft["away"]
@@ -254,8 +353,11 @@ async def fetch_league_with_form(
     if is_tournament:
         # Every team drawn into the current edition is a genuine participant —
         # use the full schedule (group games exist before any kick-off).
+        # Skip knockout placeholders (null id) and anything without team info.
         current_team_ids = {
-            m[side]["id"] for m in cur_matches for side in ("homeTeam", "awayTeam")
+            m[side]["id"]
+            for m in cur_matches for side in ("homeTeam", "awayTeam")
+            if m[side].get("id") and m[side]["id"] in teams
         }
     else:
         # Genuine participants of the CURRENT season only. Counting current-season
@@ -461,6 +563,37 @@ async def fetch_team_upcoming_matches(
     return upcoming
 
 
+def build_form_summary(matches: list[dict]) -> dict:
+    """Aggregate stats from a list of RecentMatch-shaped dicts (any source)."""
+    wins = sum(1 for m in matches if m["result"] == "W")
+    draws = sum(1 for m in matches if m["result"] == "D")
+    losses = sum(1 for m in matches if m["result"] == "L")
+    gf = sum(m["goals_for"] for m in matches)
+    ga = sum(m["goals_against"] for m in matches)
+    over_15 = sum(1 for m in matches if m["goals_for"] + m["goals_against"] > 1.5)
+    over_25 = sum(1 for m in matches if m["goals_for"] + m["goals_against"] > 2.5)
+    btts = sum(1 for m in matches if m["goals_for"] > 0 and m["goals_against"] > 0)
+    n = len(matches) or 1
+    return {
+        "played": len(matches),
+        "wins": wins,
+        "draws": draws,
+        "losses": losses,
+        "goals_for": gf,
+        "goals_against": ga,
+        "avg_goals_for": round(gf / n, 2),
+        "avg_goals_against": round(ga / n, 2),
+        "over_15_pct": round(over_15 / n * 100),
+        "over_25_pct": round(over_25 / n * 100),
+        "btts_pct": round(btts / n * 100),
+        "clean_sheets": sum(1 for m in matches if m["goals_against"] == 0),
+        "failed_to_score": sum(1 for m in matches if m["goals_for"] == 0),
+        "ppg": round((wins * 3 + draws) / n, 2),
+        # Oldest→newest so the UI can render a left-to-right form streak
+        "form": "".join(m["result"] for m in reversed(matches)),
+    }
+
+
 async def fetch_team_recent_matches(
     client: httpx.AsyncClient, team_api_id: int, limit: int = 6,
     league_hint: str | None = None,
@@ -470,35 +603,13 @@ async def fetch_team_recent_matches(
     raw = (await _team_finished_matches(client, team_api_id, league_hint))[:limit]
 
     matches: list[dict] = []
-    wins = draws = losses = gf = ga = 0
-    over_15 = over_25 = btts = clean_sheets = failed_to_score = 0
-
     for m in raw:
         is_home = m["homeTeam"]["id"] == team_api_id
         opp = m["awayTeam"] if is_home else m["homeTeam"]
         ft = m["score"]["fullTime"]
         my_goals = ft["home"] if is_home else ft["away"]
         opp_goals = ft["away"] if is_home else ft["home"]
-
-        if my_goals > opp_goals:
-            result = "W"; wins += 1
-        elif my_goals == opp_goals:
-            result = "D"; draws += 1
-        else:
-            result = "L"; losses += 1
-
-        gf += my_goals
-        ga += opp_goals
-        if my_goals + opp_goals > 1.5:
-            over_15 += 1
-        if my_goals + opp_goals > 2.5:
-            over_25 += 1
-        if my_goals > 0 and opp_goals > 0:
-            btts += 1
-        if opp_goals == 0:
-            clean_sheets += 1
-        if my_goals == 0:
-            failed_to_score += 1
+        result = "W" if my_goals > opp_goals else ("D" if my_goals == opp_goals else "L")
 
         comp = m.get("competition", {})
         matches.append({
@@ -516,26 +627,7 @@ async def fetch_team_recent_matches(
             "result": result,
         })
 
-    n = len(matches) or 1
-    summary = {
-        "played": len(matches),
-        "wins": wins,
-        "draws": draws,
-        "losses": losses,
-        "goals_for": gf,
-        "goals_against": ga,
-        "avg_goals_for": round(gf / n, 2),
-        "avg_goals_against": round(ga / n, 2),
-        "over_15_pct": round(over_15 / n * 100),
-        "over_25_pct": round(over_25 / n * 100),
-        "btts_pct": round(btts / n * 100),
-        "clean_sheets": clean_sheets,
-        "failed_to_score": failed_to_score,
-        "ppg": round((wins * 3 + draws) / n, 2),
-        # Oldest→newest so the UI can render a left-to-right form streak
-        "form": "".join(m["result"] for m in reversed(matches)),
-    }
-    return {"summary": summary, "matches": matches}
+    return {"summary": build_form_summary(matches), "matches": matches}
 
 
 async def fetch_upcoming_fixtures(
@@ -641,7 +733,7 @@ async def fetch_wc_participants(client: httpx.AsyncClient) -> list[dict]:
     for m in data.get("matches", []):
         for side in ("homeTeam", "awayTeam"):
             t = m[side]
-            if t.get("id") and t["id"] not in seen:
+            if t.get("id") and t.get("name") and t["id"] not in seen:
                 seen[t["id"]] = {
                     "api_id": t["id"],
                     "name": t["name"],

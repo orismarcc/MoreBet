@@ -63,6 +63,16 @@ function MiniStat({ label, value, tip }: { label: string; value: string; tip: st
   )
 }
 
+/** Rótulo curto da competição — códigos do provedor ou slugs ESPN. */
+function compLabel(code: string): string {
+  if (!code.includes('.')) return code
+  if (code === 'fifa.world') return 'COPA'
+  if (code === 'fifa.friendly') return 'AMI'
+  if (code.startsWith('fifa.worldq')) return 'ELIM'
+  const last = code.split('.').pop() ?? code
+  return last.slice(0, 5).toUpperCase()
+}
+
 function MatchRow({ m, onOpen }: { m: RecentMatch; onOpen: () => void }) {
   const date = new Date(m.date).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   return (
@@ -82,8 +92,11 @@ function MatchRow({ m, onOpen }: { m: RecentMatch; onOpen: () => void }) {
       <span className="text-surface-200 truncate flex-1 min-w-0">{m.opponent}</span>
       <BarChart3 size={12} className="text-surface-500 group-hover:text-brand-400 transition-colors flex-shrink-0" />
       {m.competition_code && (
-        <span className="hidden sm:inline text-[10px] text-surface-400 bg-surface-700 px-1.5 py-0.5 rounded flex-shrink-0">
-          {m.competition_code}
+        <span
+          title={m.competition ?? undefined}
+          className="hidden sm:inline text-[10px] text-surface-400 bg-surface-700 px-1.5 py-0.5 rounded flex-shrink-0"
+        >
+          {compLabel(m.competition_code)}
         </span>
       )}
       <span className="font-mono font-semibold text-white tabular-nums flex-shrink-0">
