@@ -60,7 +60,9 @@ async def _get_with_retry(
 # but barely change within minutes. Caching them keeps bursts of user clicks
 # well inside the 10 req/min budget — this was the root cause of intermittent
 # "dados indisponíveis" on the Times page.
-_TTL_DEFAULT = 600.0  # 10 minutes
+_TTL_DEFAULT = 600.0          # 10 minutes
+_TTL_TEAM = 3 * 3600.0        # finished/upcoming per-team windows
+_TTL_LEAGUE_FIXTURES = 900.0  # league schedule windows (Jogos page fan-out)
 _response_cache: dict[str, tuple[float, dict]] = {}
 
 
@@ -134,6 +136,7 @@ def _code(league_id: int) -> str:
 async def _get_matches(
     client: httpx.AsyncClient, code: str, *, season: int | None = None,
     date_from: str | None = None, date_to: str | None = None,
+    ttl: float | None = None,
 ) -> dict:
     params: dict[str, str | int] = {}
     if season is not None:
@@ -142,11 +145,10 @@ async def _get_matches(
         params["dateFrom"] = date_from
     if date_to:
         params["dateTo"] = date_to
-    return await _get_with_retry(
-        client,
-        f"{settings.football_data_base_url}/competitions/{code}/matches",
-        params=params,
-    )
+    url = f"{settings.football_data_base_url}/competitions/{code}/matches"
+    if ttl is not None:
+        return await _cached_get(client, url, params=params, ttl=ttl)
+    return await _get_with_retry(client, url, params=params)
 
 
 def _team_form_averages(matches: list[dict], last_n: int) -> dict:
@@ -315,22 +317,130 @@ async def fetch_league_with_form(
     return league_dict, teams_list
 
 
-async def fetch_team_upcoming_matches(
-    client: httpx.AsyncClient, team_api_id: int, limit: int = 5
+# The per-team matches endpoint 403s on the free tier whenever the team has
+# matches in a restricted competition (e.g. Werder/Leipzig in the DFB-Pokal) —
+# no filter combination unlocks it. Once we see a 403 we remember it and use
+# the per-competition fallback below, which always works.
+_team_endpoint_blocked: set[int] = set()
+_team_league_code: dict[int, str] = {}  # learned api_id -> competition code
+
+
+async def _league_season_matches(client: httpx.AsyncClient, code: str) -> list[dict]:
+    """All matches (any status) of a competition's current season — one cached
+    call shared by every team of that league."""
+    data = await _get_matches(client, code, ttl=_TTL_TEAM)
+    return data.get("matches", [])
+
+
+async def _locate_team_league(
+    client: httpx.AsyncClient, team_api_id: int, league_hint: str | None
+) -> str | None:
+    """Find which of our competitions a team plays in (memoised)."""
+    if team_api_id in _team_league_code:
+        return _team_league_code[team_api_id]
+    codes: list[str] = []
+    if league_hint:
+        codes.append(league_hint)
+    codes += [c for c, _n, _co in FD_LEAGUES.values() if c not in codes]
+    for code in codes:
+        try:
+            ms = await _league_season_matches(client, code)
+        except httpx.HTTPError:
+            continue
+        for m in ms:
+            if team_api_id in (m["homeTeam"].get("id"), m["awayTeam"].get("id")):
+                _team_league_code[team_api_id] = code
+                return code
+    return None
+
+
+def _finished_only(ms: list[dict]) -> list[dict]:
+    out = [
+        m for m in ms
+        if m["status"] == _FINISHED
+        and m["score"]["fullTime"]["home"] is not None
+        and m["score"]["fullTime"]["away"] is not None
+    ]
+    out.sort(key=lambda m: m["utcDate"], reverse=True)
+    return out
+
+
+async def _team_finished_matches(
+    client: httpx.AsyncClient, team_api_id: int, league_hint: str | None = None
 ) -> list[dict]:
-    """Next scheduled matches for a team within the coming 60 days."""
+    """A team's recent finished matches, newest first.
+
+    Primary: the per-team endpoint (cross-competition, up to 100 games).
+    Fallback on 403: the team's league season matches filtered locally —
+    league-only, but available for every team. Both paths are cached and
+    shared by recent-form, summaries AND head-to-head, so a full analysis
+    costs at most 2 provider calls cold and zero warm."""
+    if team_api_id not in _team_endpoint_blocked:
+        try:
+            data = await _cached_get(
+                client,
+                f"{settings.football_data_base_url}/teams/{team_api_id}/matches",
+                params={"status": "FINISHED", "limit": 100},
+                ttl=_TTL_TEAM,
+            )
+            return _finished_only(data.get("matches", []))
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 403:
+                raise
+            _team_endpoint_blocked.add(team_api_id)
+            logger.info(
+                "team %s matches endpoint restricted — using league fallback",
+                team_api_id,
+            )
+
+    code = await _locate_team_league(client, team_api_id, league_hint)
+    if code is None:
+        return []
+    ms = await _league_season_matches(client, code)
+    mine = [
+        m for m in ms
+        if team_api_id in (m["homeTeam"].get("id"), m["awayTeam"].get("id"))
+    ]
+    return _finished_only(mine)
+
+
+async def fetch_team_upcoming_matches(
+    client: httpx.AsyncClient, team_api_id: int, limit: int = 5,
+    league_hint: str | None = None,
+) -> list[dict]:
+    """Next scheduled matches for a team within the coming 60 days.
+    Same 403 fallback as finished matches: league schedule filtered locally."""
     today = date.today()
-    data = await _cached_get(
-        client,
-        f"{settings.football_data_base_url}/teams/{team_api_id}/matches",
-        params={
-            "dateFrom": today.isoformat(),
-            "dateTo": (today + timedelta(days=60)).isoformat(),
-            "limit": 20,
-        },
-    )
+    candidates: list[dict] = []
+    if team_api_id not in _team_endpoint_blocked:
+        try:
+            data = await _cached_get(
+                client,
+                f"{settings.football_data_base_url}/teams/{team_api_id}/matches",
+                params={
+                    "dateFrom": today.isoformat(),
+                    "dateTo": (today + timedelta(days=60)).isoformat(),
+                    "limit": 20,
+                },
+                ttl=_TTL_TEAM,
+            )
+            candidates = data.get("matches", [])
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 403:
+                raise
+            _team_endpoint_blocked.add(team_api_id)
+    if not candidates and team_api_id in _team_endpoint_blocked:
+        code = await _locate_team_league(client, team_api_id, league_hint)
+        if code is not None:
+            ms = await _league_season_matches(client, code)
+            candidates = [
+                m for m in ms
+                if team_api_id in (m["homeTeam"].get("id"), m["awayTeam"].get("id"))
+                and m["utcDate"][:10] >= today.isoformat()
+            ]
+
     upcoming: list[dict] = []
-    for m in sorted(data.get("matches", []), key=lambda x: x["utcDate"]):
+    for m in sorted(candidates, key=lambda x: x["utcDate"]):
         if m["status"] not in ("SCHEDULED", "TIMED"):
             continue
         is_home = m["homeTeam"]["id"] == team_api_id
@@ -343,6 +453,7 @@ async def fetch_team_upcoming_matches(
             "competition_emblem": comp.get("emblem"),
             "is_home": is_home,
             "opponent": opp["name"],
+            "opponent_api_id": opp.get("id"),
             "opponent_crest": opp.get("crest"),
         })
         if len(upcoming) >= limit:
@@ -351,24 +462,12 @@ async def fetch_team_upcoming_matches(
 
 
 async def fetch_team_recent_matches(
-    client: httpx.AsyncClient, team_api_id: int, limit: int = 6
+    client: httpx.AsyncClient, team_api_id: int, limit: int = 6,
+    league_hint: str | None = None,
 ) -> dict:
     """Recent finished matches for a team (across all competitions) plus an
     aggregated form summary. `team_api_id` is the football-data.org team id."""
-    data = await _cached_get(
-        client,
-        f"{settings.football_data_base_url}/teams/{team_api_id}/matches",
-        params={"status": "FINISHED", "limit": max(limit, 1)},
-    )
-
-    raw = [
-        m for m in data.get("matches", [])
-        if m["score"]["fullTime"]["home"] is not None
-        and m["score"]["fullTime"]["away"] is not None
-    ]
-    # Most recent first
-    raw.sort(key=lambda m: m["utcDate"], reverse=True)
-    raw = raw[:limit]
+    raw = (await _team_finished_matches(client, team_api_id, league_hint))[:limit]
 
     matches: list[dict] = []
     wins = draws = losses = gf = ga = 0
@@ -448,7 +547,8 @@ async def fetch_upcoming_fixtures(
     today = date.today()
     to = today + timedelta(days=days)
     data = await _get_matches(
-        client, code, date_from=today.isoformat(), date_to=to.isoformat()
+        client, code, date_from=today.isoformat(), date_to=to.isoformat(),
+        ttl=_TTL_LEAGUE_FIXTURES,
     )
     comp = data.get("competition", {})
     league_logo = comp.get("emblem")
@@ -484,16 +584,13 @@ async def fetch_head_to_head(
     team_a_api_id: int,
     team_b_api_id: int,
     limit: int = 3,
+    league_hint: str | None = None,
 ) -> list[dict]:
     """Last direct meetings between two teams (within competitions the free
-    tier exposes). One cached call: team A's finished matches filtered for B."""
-    data = await _cached_get(
-        client,
-        f"{settings.football_data_base_url}/teams/{team_a_api_id}/matches",
-        params={"status": "FINISHED", "limit": 100},
-    )
+    tier exposes). Reuses the shared cached finished-matches window of team A."""
+    raw = await _team_finished_matches(client, team_a_api_id, league_hint)
     meetings: list[dict] = []
-    for m in sorted(data.get("matches", []), key=lambda x: x["utcDate"], reverse=True):
+    for m in raw:
         h, a = m["homeTeam"], m["awayTeam"]
         ids = {h.get("id"), a.get("id")}
         if team_b_api_id not in ids or team_a_api_id not in ids:

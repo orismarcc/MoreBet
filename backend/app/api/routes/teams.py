@@ -10,6 +10,7 @@ from app.db.database import get_db
 from app.models.orm import League, Team
 from app.models.schemas import TeamOut, PlayerOut
 from app.services.football_data import (
+    FD_LEAGUES,
     fetch_team_recent_matches,
     fetch_team_upcoming_matches,
     fetch_wc_participants,
@@ -78,6 +79,7 @@ class UpcomingTeamMatch(BaseModel):
     competition_emblem: str | None
     is_home: bool
     opponent: str
+    opponent_api_id: int | None
     opponent_crest: str | None
 
 
@@ -141,15 +143,41 @@ async def search_teams(
     return results[:24]
 
 
-async def _recent_payload(api_id: int, limit: int, include_upcoming: bool) -> dict:
+def _league_hint(db: Session, api_id: int) -> str | None:
+    """Competition code of the team's league when we have it in the DB —
+    lets the provider fallback skip scanning every competition."""
+    team = db.query(Team).filter(Team.api_id == api_id).first()
+    if not team:
+        return None
+    league = db.query(League).filter(League.id == team.league_id).first()
+    if not league or league.api_id not in FD_LEAGUES:
+        return None
+    return FD_LEAGUES[league.api_id][0]
+
+
+async def _recent_payload(
+    api_id: int, limit: int, include_upcoming: bool, league_hint: str | None = None,
+) -> dict:
     async with httpx.AsyncClient(timeout=30.0) as client:
-        payload = await fetch_team_recent_matches(client, api_id, limit)
+        payload = await fetch_team_recent_matches(client, api_id, limit, league_hint)
         if include_upcoming:
             try:
-                payload["upcoming"] = await fetch_team_upcoming_matches(client, api_id)
+                payload["upcoming"] = await fetch_team_upcoming_matches(
+                    client, api_id, league_hint=league_hint
+                )
             except httpx.HTTPError:
                 payload["upcoming"] = []
         return payload
+
+
+@router.get("/api/{api_id}", response_model=TeamOut)
+def get_team_by_api_id(api_id: int, db: Session = Depends(get_db)):
+    """Resolve a provider team id to our DB team (404 when not ingested) —
+    used to turn an upcoming fixture into an analysable matchup."""
+    team = db.query(Team).filter(Team.api_id == api_id).first()
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not in database")
+    return team
 
 
 @router.get("/api/{api_id}/recent", response_model=RecentForm)
@@ -157,11 +185,12 @@ async def get_recent_by_api_id(
     api_id: int,
     limit: int = Query(default=6, ge=1, le=15),
     upcoming: bool = Query(default=False),
+    db: Session = Depends(get_db),
 ):
     """Recent form straight from the data provider, keyed by the provider's
     team id — used for national teams that have no row in our DB."""
     try:
-        return await _recent_payload(api_id, limit, upcoming)
+        return await _recent_payload(api_id, limit, upcoming, _league_hint(db, api_id))
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Data provider error: {e}")
 
@@ -202,6 +231,8 @@ async def get_team_recent(
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
     try:
-        return await _recent_payload(team.api_id, limit, upcoming)
+        return await _recent_payload(
+            team.api_id, limit, upcoming, _league_hint(db, team.api_id)
+        )
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Data provider error: {e}")

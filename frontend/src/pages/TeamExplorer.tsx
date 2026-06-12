@@ -9,6 +9,10 @@ import Tooltip from '../components/Tooltip'
 
 const SUGGESTIONS = ['Brazil', 'Mexico', 'Real Madrid', 'Bayern', 'Cruzeiro', 'Arsenal']
 
+interface ExplorerProps {
+  onAnalyse?: (home: Team, away: Team) => void
+}
+
 function StatBox({ label, value, tip }: { label: string; value: string; tip: string }) {
   return (
     <Tooltip content={tip}>
@@ -26,7 +30,7 @@ function KindBadge({ kind }: { kind: 'club' | 'national' }) {
     : <span className="badge-yellow"><Flag size={11} /> Seleção</span>
 }
 
-export default function TeamExplorer() {
+export default function TeamExplorer({ onAnalyse }: ExplorerProps) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<TeamSearchResult[]>([])
   const [searching, setSearching] = useState(false)
@@ -129,8 +133,10 @@ export default function TeamExplorer() {
               : { kind: 'api', apiId: selected.api_id }}
             name="Últimos jogos"
             queryName={selected.name}
+            myApiId={selected.api_id}
             limit={10}
             withUpcoming
+            onAnalyse={onAnalyse}
           />
         </div>
       </motion.div>

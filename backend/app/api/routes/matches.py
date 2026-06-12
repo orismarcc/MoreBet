@@ -20,7 +20,7 @@ from app.models.schemas import (
 from app.core.engine import TeamInput, analyse_match
 from app.core.strength import LeagueAverages
 from app.core.odds import calc_value
-from app.services.football_data import fetch_head_to_head
+from app.services.football_data import FD_LEAGUES, fetch_head_to_head
 from app.services.espn import fetch_match_details
 
 router = APIRouter(prefix="/matches", tags=["matches"])
@@ -69,11 +69,20 @@ async def head_to_head(
     home_api_id: int = Query(...),
     away_api_id: int = Query(...),
     limit: int = Query(default=3, ge=1, le=10),
+    db: Session = Depends(get_db),
 ):
     """Last direct meetings between two teams (provider team api ids)."""
+    hint: str | None = None
+    team = db.query(Team).filter(Team.api_id == home_api_id).first()
+    if team:
+        league = db.query(League).filter(League.id == team.league_id).first()
+        if league and league.api_id in FD_LEAGUES:
+            hint = FD_LEAGUES[league.api_id][0]
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
-            return await fetch_head_to_head(client, home_api_id, away_api_id, limit)
+            return await fetch_head_to_head(
+                client, home_api_id, away_api_id, limit, league_hint=hint
+            )
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Data provider error: {e}")
 
@@ -108,7 +117,11 @@ def calculate_match(payload: CalculateMatchIn, db: Session = Depends(get_db)):
     if not home_team or not away_team:
         raise HTTPException(status_code=404, detail="One or both teams not found")
     if home_team.league_id != away_team.league_id:
-        raise HTTPException(status_code=400, detail="Teams must belong to the same league")
+        raise HTTPException(
+            status_code=400,
+            detail="Análise disponível apenas entre times da mesma liga — o modelo "
+                   "normaliza as forças pelas médias da liga em comum.",
+        )
 
     league = db.query(League).filter(League.id == home_team.league_id).first()
     if not league or not league.home_goals_avg:

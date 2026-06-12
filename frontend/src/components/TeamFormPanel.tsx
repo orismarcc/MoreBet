@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
-import { AlertCircle, BarChart3, CalendarClock, Home, Plane } from 'lucide-react'
-import type { MatchRef, RecentForm as RecentFormData, RecentMatch, UpcomingTeamMatch } from '../types'
+import { AlertCircle, BarChart3, CalendarClock, ChevronRight, Home, Plane } from 'lucide-react'
+import type { MatchRef, RecentForm as RecentFormData, RecentMatch, Team, UpcomingTeamMatch } from '../types'
 import { teamsApi } from '../lib/api'
+import { useToast } from '../lib/toast'
 import MatchDetailModal from './MatchDetailModal'
 import Spinner from './Spinner'
 import Tooltip from './Tooltip'
@@ -15,12 +16,16 @@ interface Props {
   name: string
   /** Nome real do time para consultas (quando `name` é um título de seção). */
   queryName?: string
+  /** api_id do próprio time — necessário para analisar próximos jogos. */
+  myApiId?: number
   /** Quantos jogos finalizados buscar (padrão 6). */
   limit?: number
   /** Busca e exibe também os próximos jogos do time. */
   withUpcoming?: boolean
   /** Sem moldura própria — para embutir dentro de outro card. */
   bare?: boolean
+  /** Quando definido, próximos jogos ficam clicáveis e abrem a análise. */
+  onAnalyse?: (home: Team, away: Team) => void
 }
 
 const RESULT_STYLE: Record<string, string> = {
@@ -95,36 +100,82 @@ function MatchRow({ m, onOpen }: { m: RecentMatch; onOpen: () => void }) {
   )
 }
 
-function UpcomingRow({ m }: { m: UpcomingTeamMatch }) {
+function UpcomingRow({ m, onAnalyse, analysing }: {
+  m: UpcomingTeamMatch
+  onAnalyse?: () => void
+  analysing: boolean
+}) {
   const d = new Date(m.date)
   const date = d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })
   const time = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
-  return (
-    <div className="flex items-center gap-2 py-1.5 text-sm">
+  const clickable = !!onAnalyse
+
+  const content = (
+    <>
       <span className="text-[11px] text-surface-400 w-10 flex-shrink-0 tabular-nums">{date}</span>
-      <Tooltip content={m.is_home ? 'Em casa' : 'Fora'}>
-        {m.is_home
-          ? <Home size={12} className="text-surface-400 flex-shrink-0" />
-          : <Plane size={12} className="text-surface-400 flex-shrink-0" />}
-      </Tooltip>
+      {m.is_home
+        ? <Home size={12} className="text-surface-400 flex-shrink-0" />
+        : <Plane size={12} className="text-surface-400 flex-shrink-0" />}
       {m.opponent_crest && (
         <img src={m.opponent_crest} alt="" className="w-4 h-4 object-contain flex-shrink-0" />
       )}
       <span className="text-surface-200 truncate flex-1 min-w-0">{m.opponent}</span>
-      <span className="text-[11px] text-surface-400 truncate hidden sm:block max-w-[120px]">{m.competition}</span>
+      <span className="text-[11px] text-surface-400 truncate hidden sm:block max-w-[110px]">{m.competition}</span>
       <span className="text-xs text-brand-300 font-mono tabular-nums flex-shrink-0">{time}</span>
-    </div>
+      {clickable && (
+        analysing
+          ? <Spinner size={12} />
+          : <ChevronRight size={13} className="text-surface-500 group-hover:text-brand-400 transition-colors flex-shrink-0" />
+      )}
+    </>
+  )
+
+  if (!clickable) {
+    return <div className="flex items-center gap-2 py-1.5 text-sm">{content}</div>
+  }
+  return (
+    <button
+      onClick={onAnalyse}
+      disabled={analysing}
+      title="Analisar este confronto"
+      className="w-full flex items-center gap-2 py-1.5 text-sm text-left rounded-lg
+                 hover:bg-surface-700/60 transition-colors px-1 -mx-1 group disabled:opacity-60"
+    >
+      {content}
+    </button>
   )
 }
 
-export default function TeamFormPanel({ source, name, queryName, limit = 6, withUpcoming = false, bare = false }: Props) {
+export default function TeamFormPanel({
+  source, name, queryName, myApiId, limit = 6, withUpcoming = false, bare = false, onAnalyse,
+}: Props) {
   const [data, setData] = useState<RecentFormData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
   const [detail, setDetail] = useState<MatchRef | null>(null)
+  const [analysingId, setAnalysingId] = useState<number | null>(null)
+  const toast = useToast()
 
   const teamName = queryName ?? name
   const sourceKey = source.kind === 'db' ? `db:${source.id}` : `api:${source.apiId}`
+
+  async function analyseUpcoming(m: UpcomingTeamMatch) {
+    if (!onAnalyse || !myApiId || !m.opponent_api_id) return
+    setAnalysingId(m.match_id)
+    try {
+      const [me, opp] = await Promise.all([
+        teamsApi.byApiId(myApiId),
+        teamsApi.byApiId(m.opponent_api_id),
+      ])
+      const home = m.is_home ? me : opp
+      const away = m.is_home ? opp : me
+      onAnalyse(home, away)
+    } catch {
+      toast.info('Análise indisponível: um dos times ainda não tem dados de força no banco (ex.: Copa sem jogos finalizados ou liga não coberta).')
+    } finally {
+      setAnalysingId(null)
+    }
+  }
 
   function openDetail(m: RecentMatch) {
     setDetail({
@@ -214,8 +265,22 @@ export default function TeamFormPanel({ source, name, queryName, limit = 6, with
                 Próximos jogos
               </div>
               <div className="divide-y divide-surface-600/50">
-                {data.upcoming.map(m => <UpcomingRow key={m.match_id} m={m} />)}
+                {data.upcoming.map(m => (
+                  <UpcomingRow
+                    key={m.match_id}
+                    m={m}
+                    analysing={analysingId === m.match_id}
+                    onAnalyse={onAnalyse && myApiId && m.opponent_api_id
+                      ? () => analyseUpcoming(m)
+                      : undefined}
+                  />
+                ))}
               </div>
+              {onAnalyse && (
+                <p className="text-[10px] text-surface-400 mt-1">
+                  Toque em um próximo jogo para abrir a análise do confronto.
+                </p>
+              )}
             </div>
           )}
         </>

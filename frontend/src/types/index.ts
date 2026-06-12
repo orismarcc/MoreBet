@@ -142,6 +142,7 @@ export interface UpcomingTeamMatch {
   competition_emblem: string | null
   is_home: boolean
   opponent: string
+  opponent_api_id: number | null
   opponent_crest: string | null
 }
 

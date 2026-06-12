@@ -58,6 +58,8 @@ export const teamsApi = {
     api.get<import('../types').RecentForm>(`/teams/${teamId}/recent`, {
       params: { limit, upcoming },
     }).then(r => r.data),
+  byApiId: (apiId: number) =>
+    api.get<Team>(`/teams/api/${apiId}`).then(r => r.data),
   recentByApiId: (apiId: number, limit = 6, upcoming = false) =>
     api.get<import('../types').RecentForm>(`/teams/api/${apiId}/recent`, {
       params: { limit, upcoming },
