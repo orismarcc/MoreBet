@@ -251,6 +251,7 @@ export interface AgentRecommendation {
   model_probability: number
   fair_odds: number
   min_bookie_odds: number
+  suggested_stake_pct: number
   confidence: RecommendationConfidence
   rationale: string
   caveats: string[]

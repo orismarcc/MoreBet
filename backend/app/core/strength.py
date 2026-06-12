@@ -16,18 +16,18 @@ class TeamStrength:
 
 
 # Bayesian prior weight: a team's average only fully "speaks for itself" after
-# many games. With k=6, a team with 6 games sits halfway between its own rate
-# and the league average; with 18 games its own rate dominates (75%). Chosen so
-# the most defensive realistic matchup prices 0-0 under ~25%, in line with how
-# bookmakers cap that scoreline.
-SHRINKAGE_GAMES = 6.0
+# many games. k=8 won a walk-forward backtest sweep (k ∈ 4..12) over PL, La
+# Liga, Ligue 1 and Brasileirão (~2.8k matches): best 1X2 Brier/log-loss and
+# near-perfect top-bucket calibration (predicted 74.6% vs observed 74.2%).
+# k=6 was overconfident at the top (75.3%→72.9%); k=10 flips to underconfident.
+SHRINKAGE_GAMES = 8.0
 
 
 def shrink_avg(
     team_avg: float,
     games_played: int | None,
     league_avg: float,
-    k: float = SHRINKAGE_GAMES,
+    k: float | None = None,
 ) -> float:
     """
     Shrink a team's per-game average toward the league average (regression to
@@ -38,6 +38,10 @@ def shrink_avg(
     Returns team_avg untouched when games_played is unknown (None) so callers
     without sample sizes keep the historical behaviour.
     """
+    if k is None:
+        # Resolved at call time so calibration sweeps can tune the module
+        # constant without stale function defaults.
+        k = SHRINKAGE_GAMES
     if games_played is None or league_avg <= 0:
         return team_avg
     return (team_avg * games_played + league_avg * k) / (games_played + k)

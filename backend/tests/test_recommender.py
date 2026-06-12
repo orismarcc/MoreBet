@@ -37,12 +37,12 @@ class TestValidateReport:
         assert [r.market for r in recs] == ["home_win"]
         assert any("desconhecido" in n.lower() for n in notes)
 
-    def test_more_than_three_are_trimmed(self):
+    def test_more_than_max_are_trimmed(self):
         recs, notes = validate_report(
             _report([_rec("home_win"), _rec("home_or_draw"), _rec("over_25"), _rec("under_45")]),
             MARKETS, min_sample=10, backtest_skill=0.05,
         )
-        assert len(recs) == 3
+        assert len(recs) == 2
         assert any("limitado" in n for n in notes)
 
     def test_duplicates_are_removed(self):
@@ -58,8 +58,25 @@ class TestValidateReport:
         r = recs[0]
         assert r.model_probability == 0.70
         assert r.fair_odds == round(1 / 0.70, 3)
-        assert r.min_bookie_odds == r.fair_odds
+        # Minimum bookie odds embed the value margin → every bet is +EV
+        assert r.min_bookie_odds == round(r.fair_odds * 1.04, 3)
         assert r.market_label == MARKET_LABELS["home_win"]
+
+    def test_quarter_kelly_stake(self):
+        recs, _ = validate_report(
+            _report([_rec("home_win")]), MARKETS, min_sample=10, backtest_skill=0.05)
+        # kelly = m·p / (1 + m − p) com m=0.04, p=0.70 → /4
+        expected = (0.04 * 0.70 / (1.04 - 0.70)) / 4
+        assert abs(recs[0].suggested_stake_pct - round(expected, 4)) < 1e-9
+
+    def test_micro_odds_cannot_be_high_confidence(self):
+        """fair 1/0.85 = 1.176 < 1.30 → alta vira media (regra de lucro)."""
+        recs, _ = validate_report(
+            _report([_rec("home_or_draw", "alta")]),
+            MARKETS, min_sample=10, backtest_skill=0.05,
+        )
+        assert recs[0].confidence == "media"
+        assert any("micro-odds" in c.lower() for c in recs[0].caveats)
 
     def test_high_confidence_downgraded_below_65pct(self):
         recs, _ = validate_report(
@@ -92,7 +109,7 @@ class TestValidateReport:
 
     def test_compliant_high_confidence_survives(self):
         recs, _ = validate_report(
-            _report([_rec("home_or_draw", "alta")]),  # 0.85, sample ok, skill ok
+            _report([_rec("home_win", "alta")]),  # 0.70 → fair 1.43 ≥ 1.30, tudo ok
             MARKETS, min_sample=10, backtest_skill=0.05,
         )
         assert recs[0].confidence == "alta"

@@ -30,6 +30,15 @@ CONFIDENCE_HIGH_MIN_PROB = 0.65
 CONFIDENCE_MED_MIN_PROB = 0.55
 CONFIDENCE_HIGH_MIN_SAMPLE = 8
 
+# Profit policy. Betting AT fair odds is EV-zero by construction — the fire
+# test proved it (-25% ROI settling at fair). Profit requires a margin:
+# min_bookie_odds embeds VALUE_MARGIN of edge, so following the number means
+# every bet has ≥ +4% EV. Micro-odds rarely clear that bar at real bookies
+# (one loss erases 4-5 wins), so fair odds below ODDS_FLOOR can't be "alta".
+VALUE_MARGIN = 0.04
+ODDS_FLOOR = 1.30
+MAX_RECOMMENDATIONS = 2
+
 # pt-BR labels for every market key the model exposes.
 MARKET_LABELS: dict[str, str] = {
     "home_win": "Vitória do mandante (1)",
@@ -96,7 +105,8 @@ class ValidatedRecommendation(BaseModel):
     market_label: str
     model_probability: float
     fair_odds: float
-    min_bookie_odds: float   # only bet if the bookie pays MORE than this
+    min_bookie_odds: float        # fair × (1 + VALUE_MARGIN): bet only above this
+    suggested_stake_pct: float    # quarter-Kelly fraction of bankroll at min odds
     confidence: Confidence
     rationale: str
     caveats: list[str]
@@ -134,20 +144,30 @@ dossiê (probabilidades, médias, sequências, percentuais).
 3. As probabilidades do modelo não são negociáveis: seu papel é cruzá-las com \
 forma e H2H para CONFIRMAR ou ENFRAQUECER a confiança — nunca substituí-las \
 pela sua intuição.
-4. Recomende no MÁXIMO 3 mercados, sempre usando a chave exata de \
-model.markets (ex.: "home_or_draw", "under_35", "btts_no").
+4. Recomende no MÁXIMO 2 mercados, sempre usando a chave exata de \
+model.markets (ex.: "home_or_draw", "under_35", "btts_no"). Menos é mais: uma \
+única aposta excelente vale mais que três medianas.
 5. Critérios de confiança (teto rígido — na dúvida, rebaixe):
    - "alta": probabilidade ≥ 0.65 E amostra relevante ≥ 8 jogos E forma/H2H \
-não contradizem o modelo E backtest da liga com skill positivo.
+não contradizem o modelo E backtest da liga com skill positivo. APENAS \
+confiança alta é convite a apostar; média e baixa são observação.
    - "media": probabilidade ≥ 0.55 com sinais mistos ou amostra menor.
    - "baixa": todo o resto. Prefira nem recomendar.
 6. Se o backtest mostrar skill fraco/negativo em over/btts, trate esses \
 mercados com ceticismo explícito e rebaixe a confiança neles.
 7. no_bet = true quando nenhum mercado tem probabilidade ≥ 0.55 com suporte \
 qualitativo, ou quando os dados são insuficientes/desatualizados. Dizer "não \
-aposte" é uma resposta valiosa — não force recomendação.
-8. Mercados com margem de segurança (dupla chance, under/over de linha \
-distante) merecem preferência quando a confiança é média.
+aposte" é uma resposta valiosa — não force recomendação. Em teste real, \
+seguir recomendações fracas deu prejuízo; abster-se preservou a banca.
+8. REGRAS DE LUCRATIVIDADE (aprendidas em backtest com dinheiro simulado):
+   - Evite mercados com odd justa abaixo de ~1.30 (probabilidade > ~77%): \
+micro-odds raramente carregam valor nas casas e uma única derrota apaga \
+várias vitórias. Prefira a faixa de odd justa 1.30–2.50.
+   - O apostador SÓ deve apostar se a casa pagar ACIMA da odd mínima \
+informada (que já embute margem de valor). Reforce isso na justificativa \
+quando relevante.
+   - Entre dois mercados equivalentes, prefira o que tem skill positivo no \
+backtest da liga.
 9. data_quality_notes: registre amostras pequenas, dados velhos (> 24h), H2H \
 vazio, divergência forte entre forma e modelo.
 10. Escreva em português do Brasil, tom direto e profissional. Nunca prometa \
@@ -176,9 +196,12 @@ def validate_report(
     validated: list[ValidatedRecommendation] = []
 
     recs = report.recommendations
-    if len(recs) > 3:
-        notes.append(f"Agente sugeriu {len(recs)} mercados; limitado aos 3 primeiros.")
-        recs = recs[:3]
+    if len(recs) > MAX_RECOMMENDATIONS:
+        notes.append(
+            f"Agente sugeriu {len(recs)} mercados; limitado aos "
+            f"{MAX_RECOMMENDATIONS} primeiros."
+        )
+        recs = recs[:MAX_RECOMMENDATIONS]
 
     seen: set[str] = set()
     for rec in recs:
@@ -209,12 +232,25 @@ def validate_report(
             caveats.append("Confiança rebaixada: backtest da liga sem skill positivo.")
 
         fair = round(1.0 / max(prob, 1e-6), 3)
+        if fair < ODDS_FLOOR and confidence == "alta":
+            confidence = "media"
+            caveats.append(
+                f"Confiança rebaixada: odd justa {fair:.2f} abaixo de {ODDS_FLOOR:.2f} — "
+                "micro-odds raramente oferecem valor real e uma derrota apaga várias vitórias."
+            )
+
+        # Bet only above this number → every bet carries ≥ VALUE_MARGIN of EV.
+        min_odds = round(fair * (1 + VALUE_MARGIN), 3)
+        # Quarter-Kelly sized AT the minimum odds (edge = VALUE_MARGIN):
+        # kelly = m·p / (1 + m − p)
+        kelly = VALUE_MARGIN * prob / max(1 + VALUE_MARGIN - prob, 1e-6)
         validated.append(ValidatedRecommendation(
             market=rec.market,
             market_label=MARKET_LABELS.get(rec.market, rec.market),
             model_probability=round(prob, 4),
             fair_odds=fair,
-            min_bookie_odds=fair,
+            min_bookie_odds=min_odds,
+            suggested_stake_pct=round(kelly / 4, 4),
             confidence=confidence,
             rationale=rec.rationale,
             caveats=caveats,

@@ -79,8 +79,9 @@ export default function RecommendationCard({ payload }: Props) {
       </div>
       <p className="text-xs text-surface-400 mb-4">
         Agente lê o modelo, a forma recente, o H2H e o backtest da liga — e só
-        recomenda o que os dados sustentam. Probabilidades e odds vêm sempre do
-        modelo estatístico, nunca da IA.
+        recomenda o que os dados sustentam. A odd mínima já embute margem de
+        valor: <strong className="text-surface-300">aposte apenas se a casa pagar acima dela</strong>,
+        e trate confiança média/baixa como observação, não aposta.
       </p>
 
       {!report && !loading && (
@@ -149,7 +150,7 @@ export default function RecommendationCard({ payload }: Props) {
                       </span>
                     </div>
 
-                    <div className="flex items-center gap-4 text-sm">
+                    <div className="flex items-center gap-4 text-sm flex-wrap">
                       <div>
                         <p className="text-[11px] text-surface-400">Prob. modelo</p>
                         <p className="font-mono font-semibold text-brand-300">
@@ -157,13 +158,23 @@ export default function RecommendationCard({ payload }: Props) {
                         </p>
                       </div>
                       <div>
-                        <Tooltip content="Só há valor matemático se a casa pagar ACIMA desta odd">
+                        <Tooltip content="Odd justa + margem de valor (+4% de EV). Aposte SOMENTE se a casa pagar acima deste número — abaixo dele a aposta não tem vantagem matemática.">
                           <p className="text-[11px] text-surface-400 border-b border-dotted border-surface-500 cursor-help">
                             Apostar acima de
                           </p>
                         </Tooltip>
                         <p className="font-mono font-semibold text-emerald-400">
                           {rec.min_bookie_odds.toFixed(2)}
+                        </p>
+                      </div>
+                      <div>
+                        <Tooltip content="Fração da banca sugerida (1/4 do critério de Kelly na odd mínima) — disciplina de stake protege contra sequências ruins.">
+                          <p className="text-[11px] text-surface-400 border-b border-dotted border-surface-500 cursor-help">
+                            Stake sugerido
+                          </p>
+                        </Tooltip>
+                        <p className="font-mono font-semibold text-amber-300">
+                          {(rec.suggested_stake_pct * 100).toFixed(2)}%
                         </p>
                       </div>
                     </div>
