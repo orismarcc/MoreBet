@@ -12,7 +12,7 @@ import json
 import logging
 import time
 import unicodedata
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import httpx
 
@@ -88,9 +88,23 @@ def _teams_match(a: str, b: str) -> bool:
 
 
 async def _get(client: httpx.AsyncClient, url: str, params: dict | None = None) -> dict:
-    r = await client.get(url, params=params or {})
-    r.raise_for_status()
-    return r.json()
+    """GET with a few retries — ESPN's public API rate-limits bursts (429) and
+    occasionally 5xxs, which used to silently collapse the World Cup seeding."""
+    import asyncio as _asyncio
+
+    last: Exception | None = None
+    for attempt in range(3):
+        try:
+            r = await client.get(url, params=params or {})
+            if r.status_code in (429, 500, 502, 503, 504):
+                raise httpx.HTTPStatusError("retryable", request=r.request, response=r)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPError as exc:
+            last = exc
+            if attempt < 2:
+                await _asyncio.sleep(0.6 * (attempt + 1))
+    raise last  # type: ignore[misc]
 
 
 async def _find_event(
@@ -229,7 +243,7 @@ async def fetch_wc_espn_team_map(client: httpx.AsyncClient) -> list[dict]:
     now = time.monotonic()
     if _wc_map_cache["teams"] and now - _wc_map_cache["ts"] < _WC_MAP_TTL:
         return _wc_map_cache["teams"]
-    today = datetime.utcnow().date()
+    today = datetime.now(timezone.utc).date()
     window = (
         f"{(today - timedelta(days=10)).strftime('%Y%m%d')}"
         f"-{(today + timedelta(days=45)).strftime('%Y%m%d')}"

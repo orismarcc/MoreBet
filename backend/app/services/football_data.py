@@ -225,7 +225,9 @@ async def _bootstrap_tournament_from_internationals(
     except httpx.HTTPError:
         return None
 
-    sem = asyncio.Semaphore(8)
+    # Lower concurrency than other fan-outs: ESPN rate-limits bursts and a
+    # collapsed seeding leaves every nation on the field-average default.
+    sem = asyncio.Semaphore(4)
 
     async def _averages(p: dict) -> tuple[dict, tuple[float, float, int] | None]:
         match = next(
@@ -250,8 +252,10 @@ async def _bootstrap_tournament_from_internationals(
 
     per_team = await asyncio.gather(*(_averages(p) for p in participants))
     with_data = [avg for _, avg in per_team if avg is not None]
-    if len(with_data) < len(participants) // 2:
-        return None  # too sparse to be meaningful
+    # Partial success still beats the all-default fallback: teams with data get
+    # real strength, the rest get the field average computed from those.
+    if len(with_data) < 8:
+        return None  # genuinely too sparse to be meaningful
     field_gf = sum(a[0] for a in with_data) / len(with_data)
     field_ga = sum(a[1] for a in with_data) / len(with_data)
 
