@@ -319,6 +319,13 @@ async def recommend_match(payload: CalculateMatchIn, db: Session = Depends(get_d
         "backtest": backtest,
     }
 
+    # Sharp market line (de-margined Pinnacle/exchange) — the opponent-adjusted
+    # truth. Injected into the dossier so the agent reasons about VALUE ("is the
+    # odd wrong?") and can't be fooled by a streak vs weak opposition.
+    dossier["mercado"] = await _market_context(
+        league.api_id, home_team.name, away_team.name, markets
+    )
+
     min_sample = min(home_team.home_played or 0, away_team.away_played or 0)
     skill = backtest.get("skill_1x2") if backtest else None
     try:
@@ -339,6 +346,49 @@ async def recommend_match(payload: CalculateMatchIn, db: Session = Depends(get_d
     return report
 
 
+_MARKET_CTX_LABELS = {
+    "home_win": "Vitória mandante", "draw": "Empate", "away_win": "Vitória visitante",
+    "home_or_draw": "Dupla chance 1X", "away_or_draw": "Dupla chance X2",
+    "over_25": "Mais de 2.5", "under_25": "Menos de 2.5",
+    "over_15": "Mais de 1.5", "btts_yes": "Ambos marcam",
+}
+
+
+async def _market_context(
+    league_api_id: int, home: str, away: str, model_markets: dict,
+) -> dict | None:
+    """Compact model-vs-market block for the agent dossier: the sharp,
+    de-margined market probability next to ours, with the model's edge. None
+    when the odds provider isn't configured or has no line for this match."""
+    if not odds_market.is_configured():
+        return None
+    try:
+        snap = await odds_market.fetch_market_odds(league_api_id, home, away, ["home_win"])
+    except Exception:
+        return None
+    if not snap or not snap.get("sharp"):
+        return None
+    sharp = snap["sharp"]
+    comparacao = {}
+    for key, label in _MARKET_CTX_LABELS.items():
+        mp = sharp.get(key)
+        if mp is None or key not in model_markets:
+            continue
+        comparacao[key] = {
+            "rotulo": label,
+            "prob_mercado": round(mp, 3),
+            "prob_modelo": round(model_markets[key], 3),
+            "edge_modelo_pp": round((model_markets[key] - mp) * 100, 1),
+        }
+    if not comparacao:
+        return None
+    return {
+        "fonte": "linha afiada de-marginada (Pinnacle/exchange) — já precifica "
+                 "força do adversário, mando, motivação e lesões",
+        "comparacao": comparacao,
+    }
+
+
 async def _attach_market_odds(report, league_api_id: int, home: str, away: str) -> None:
     if not odds_market.is_configured() or not report.recommendations:
         return
@@ -357,12 +407,21 @@ async def _attach_market_odds(report, league_api_id: int, home: str, away: str) 
         rec.market_odds = entry["odds"]
         rec.market_bookmaker = entry["bookmaker"]
         rec.market_ev_pct = round((entry["odds"] / rec.fair_odds - 1) * 100, 2)
-        rec.has_market_value = entry["odds"] >= rec.min_bookie_odds
-        # Sharp-market reality check: if our probability sits ≥15 points above
-        # what even the best available price implies, the model — not the
-        # market — is the outlier. Flag it so the UI doesn't scream "value".
-        implied = 1.0 / entry["odds"]
-        rec.market_disagreement = (rec.model_probability - implied) > 0.15
+
+        sharp_prob = entry.get("sharp_prob")
+        if sharp_prob is not None:
+            rec.sharp_prob = sharp_prob
+            rec.clv_pct = entry.get("clv_pct")
+            # Value is anchored on the SHARP line (CLV), not on our model's
+            # possibly-wrong fair odds: you have an edge only if you'd beat the
+            # closing line. And divergence is model-vs-sharp — the market prices
+            # opponent strength, so a model far above it is the model's error.
+            rec.has_market_value = bool(entry.get("beats_sharp"))
+            rec.market_disagreement = (rec.model_probability - sharp_prob) > 0.15
+        else:
+            # No sharp reference (market not offered): fall back to the model bar.
+            rec.has_market_value = entry["odds"] >= rec.min_bookie_odds
+            rec.market_disagreement = (rec.model_probability - 1.0 / entry["odds"]) > 0.15
 
 
 @router.post("/value", response_model=ValueCheckOut)

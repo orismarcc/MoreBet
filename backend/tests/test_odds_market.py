@@ -72,3 +72,50 @@ def test_best_price_across_bookmakers():
     }
     res = om._market_resolvers("Brazil", "Morocco")
     assert res["home_win"](ev) == (1.82, "B")  # best (highest) price wins
+
+
+def test_demargin_removes_overround():
+    # 1X2 with ~5% overround → de-margined sums to 1.
+    probs = om._demargin([1.69, 3.76, 5.58])
+    assert abs(sum(probs) - 1.0) < 1e-9
+    assert probs[0] > probs[1] > probs[2]  # favourite highest
+
+
+def test_sharp_probabilities_1x2_and_totals_and_dc():
+    event = {
+        "home_team": "Brazil", "away_team": "Morocco",
+        "bookmakers": [{
+            "key": "pinnacle", "title": "Pinnacle",
+            "markets": [
+                {"key": "h2h", "outcomes": [
+                    {"name": "Brazil", "price": 1.69},
+                    {"name": "Morocco", "price": 5.58},
+                    {"name": "Draw", "price": 3.76},
+                ]},
+                {"key": "totals", "outcomes": [
+                    {"name": "Over", "price": 2.05, "point": 2.5},
+                    {"name": "Under", "price": 1.80, "point": 2.5},
+                ]},
+            ],
+        }],
+    }
+    sp = om.sharp_probabilities(event, "Brazil", "Morocco")
+    assert 0.55 < sp["home_win"] < 0.60          # de-margined favourite
+    assert abs(sp["home_or_draw"] - (sp["home_win"] + sp["draw"])) < 1e-9
+    assert abs((sp["over_25"] + sp["under_25"]) - 1.0) < 1e-9
+
+
+def test_sharp_prefers_sharpest_book():
+    # A soft book with a wild line must not override Pinnacle for the benchmark.
+    event = {
+        "home_team": "A", "away_team": "B",
+        "bookmakers": [
+            {"key": "softbook", "title": "Soft", "markets": [{"key": "h2h", "outcomes": [
+                {"name": "A", "price": 1.40}, {"name": "B", "price": 9.0}, {"name": "Draw", "price": 5.0}]}]},
+            {"key": "pinnacle", "title": "Pinnacle", "markets": [{"key": "h2h", "outcomes": [
+                {"name": "A", "price": 2.00}, {"name": "B", "price": 4.0}, {"name": "Draw", "price": 3.5}]}]},
+        ],
+    }
+    sp = om.sharp_probabilities(event, "A", "B")
+    # Pinnacle (A=2.00 → ~48%) wins over Soft (A=1.40 → ~70%).
+    assert sp["home_win"] < 0.55

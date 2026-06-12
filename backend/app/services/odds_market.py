@@ -39,10 +39,15 @@ LEAGUE_TO_SPORT: dict[int, str] = {
 # markets like btts/double_chance need per-event calls (extra credits) and 422
 # the sport endpoint, so we skip them: those recommendations still show the
 # value bar, just without a real-odds comparison. Cost = markets × regions.
-_MARKETS = "h2h,totals"
+# Featured markets at the sport level: 1X2, totals (O/U) and spreads (Asian
+# Handicap) — the low-margin markets professionals actually bet.
+_MARKETS = "h2h,totals,spreads"
 # Additional markets the agent often picks — only available at the event level.
 _EVENT_MARKETS = "double_chance,btts"
 _DC_BTTS = {"home_or_draw", "away_or_draw", "home_or_away", "btts_yes", "btts_no"}
+# Sharpest books first — their de-margined line is the best probability estimate
+# and the benchmark for closing-line value (CLV). Exchanges have ~no margin.
+_SHARP_BOOKS = ["pinnacle", "betfair_ex_eu", "betfair_ex_uk", "betfair_ex_au", "smarkets", "matchbook"]
 _REGIONS = "eu"
 _TTL = 1800.0  # 30 min — lines move, but not within a single analysis session
 _cache: dict[str, tuple[float, list]] = {}
@@ -221,15 +226,31 @@ def _best_named(event: dict, market_key: str, name_pred) -> tuple[float, str] | 
     return best
 
 
+def _best_spread(event: dict, team_pred, point: float) -> tuple[float, str] | None:
+    best: tuple[float, str] | None = None
+    for bm in event.get("bookmakers", []):
+        for mkt in bm.get("markets", []):
+            if mkt["key"] != "spreads":
+                continue
+            for o in mkt.get("outcomes", []):
+                if team_pred(o.get("name", "")) and abs(o.get("point", -99) - point) < 0.01:
+                    if best is None or o["price"] > best[0]:
+                        best = (o["price"], bm.get("title", bm["key"]))
+    return best
+
+
 def _market_resolvers(home: str, away: str) -> dict:
     """Map our market keys to a function that extracts (best_price, book)."""
     def dc(*needles):
         ns = [n.lower() for n in needles]
         return lambda nm: all(x in nm.lower() for x in ns)
 
+    H = lambda nm: _name_match(nm, home)
+    A = lambda nm: _name_match(nm, away)
+
     return {
-        "home_win": lambda e: _best_h2h(e, lambda o: _name_match(o["name"], home)),
-        "away_win": lambda e: _best_h2h(e, lambda o: _name_match(o["name"], away)),
+        "home_win": lambda e: _best_h2h(e, lambda o: H(o["name"])),
+        "away_win": lambda e: _best_h2h(e, lambda o: A(o["name"])),
         "draw":     lambda e: _best_h2h(e, lambda o: o["name"].lower() == "draw"),
         "over_05":  lambda e: _best_total(e, "over", 0.5),
         "over_15":  lambda e: _best_total(e, "over", 1.5),
@@ -243,11 +264,110 @@ def _market_resolvers(home: str, away: str) -> dict:
         "under_45": lambda e: _best_total(e, "under", 4.5),
         "btts_yes": lambda e: _best_named(e, "btts", dc("yes")),
         "btts_no":  lambda e: _best_named(e, "btts", dc("no")),
-        # the-odds-api double_chance outcome names are like "Home/Draw".
         "home_or_draw": lambda e: _best_named(e, "double_chance", lambda nm: _dc_match(nm, home, away, {"home", "draw"})),
         "away_or_draw": lambda e: _best_named(e, "double_chance", lambda nm: _dc_match(nm, home, away, {"away", "draw"})),
         "home_or_away": lambda e: _best_named(e, "double_chance", lambda nm: _dc_match(nm, home, away, {"home", "away"})),
+        # Asian Handicap (spreads). Lines vary by book; match exact point.
+        "ah_home_minus_half":     lambda e: _best_spread(e, H, -0.5),
+        "ah_home_minus_one":      lambda e: _best_spread(e, H, -1.0),
+        "ah_home_minus_one_half": lambda e: _best_spread(e, H, -1.5),
+        "ah_home_plus_half":      lambda e: _best_spread(e, H, +0.5),
+        "ah_away_minus_half":     lambda e: _best_spread(e, A, -0.5),
+        "ah_away_minus_one":      lambda e: _best_spread(e, A, -1.0),
+        "ah_away_minus_one_half": lambda e: _best_spread(e, A, -1.5),
+        "ah_away_plus_half":      lambda e: _best_spread(e, A, +0.5),
     }
+
+
+# ── Sharp line → de-margined market probabilities (CLV benchmark) ────────────
+
+def _demargin(prices: list[float]) -> list[float]:
+    inv = [1.0 / p for p in prices if p and p > 1.0]
+    s = sum(inv)
+    return [x / s for x in inv] if s > 0 else []
+
+
+_LINE_KEY = {0.5: "05", 1.5: "15", 2.5: "25", 3.5: "35", 4.5: "45"}
+
+
+def _ordered_books(event: dict) -> list[dict]:
+    """Bookmakers sorted sharpest-first."""
+    return sorted(
+        event.get("bookmakers", []),
+        key=lambda b: _SHARP_BOOKS.index(b["key"]) if b["key"] in _SHARP_BOOKS else 999,
+    )
+
+
+def _demargin_pair(event: dict, market_key: str, pred_a, pred_b) -> tuple[float, float] | None:
+    """First sharp book offering BOTH outcomes of a two-way market → its
+    de-margined (prob_a, prob_b). Per-line so we benchmark the exact line we
+    quote (books disagree on the main line)."""
+    for bm in _ordered_books(event):
+        mkt = next((m for m in bm["markets"] if m["key"] == market_key), None)
+        if not mkt:
+            continue
+        oa = next((o for o in mkt["outcomes"] if pred_a(o)), None)
+        ob = next((o for o in mkt["outcomes"] if pred_b(o)), None)
+        if oa and ob:
+            probs = _demargin([oa["price"], ob["price"]])
+            if len(probs) == 2:
+                return probs[0], probs[1]
+    return None
+
+
+def sharp_probabilities(event: dict, home: str, away: str) -> dict[str, float]:
+    """De-margined sharp probabilities per our market key. The sharp closing
+    line already prices opponent strength, home advantage, motivation and
+    injuries — it's the reality check the model is measured against."""
+    out: dict[str, float] = {}
+
+    # 1X2 (three-way) from the sharpest book offering it (+ derived dbl chance).
+    for bm in _ordered_books(event):
+        mkt = next((m for m in bm["markets"] if m["key"] == "h2h"), None)
+        if not mkt:
+            continue
+        h = next((o for o in mkt["outcomes"] if _name_match(o["name"], home)), None)
+        a = next((o for o in mkt["outcomes"] if _name_match(o["name"], away)), None)
+        d = next((o for o in mkt["outcomes"] if o["name"].lower() == "draw"), None)
+        if h and a and d:
+            probs = _demargin([h["price"], d["price"], a["price"]])
+            if len(probs) == 3:
+                ph, pd, pa = probs
+                out.update(home_win=ph, draw=pd, away_win=pa,
+                           home_or_draw=ph + pd, away_or_draw=pa + pd, home_or_away=ph + pa)
+                break
+
+    def over(pt):  return lambda o: o["name"].lower() == "over" and abs(o.get("point", -99) - pt) < 0.01
+    def under(pt): return lambda o: o["name"].lower() == "under" and abs(o.get("point", -99) - pt) < 0.01
+    def teamp(nm, pt): return lambda o: _name_match(o.get("name", ""), nm) and abs(o.get("point", -99) - pt) < 0.01
+
+    # Totals — benchmark each standard line against the sharpest book quoting it.
+    for pt, key in _LINE_KEY.items():
+        pair = _demargin_pair(event, "totals", over(pt), under(pt))
+        if pair:
+            out["over_" + key], out["under_" + key] = pair
+
+    # Asian Handicap — pair home@p with away@-p (they de-margin to 1).
+    for p, hk, ak in [(0.5, "ah_home_minus_half", "ah_away_plus_half"),
+                      (1.0, "ah_home_minus_one", None),
+                      (1.5, "ah_home_minus_one_half", None)]:
+        pair = _demargin_pair(event, "spreads", teamp(home, -p), teamp(away, p))
+        if pair:
+            out[hk] = pair[0]
+            if ak:
+                out[ak] = pair[1]
+    pair = _demargin_pair(event, "spreads", teamp(home, 0.5), teamp(away, -0.5))
+    if pair:
+        out["ah_home_plus_half"], out["ah_away_minus_half"] = pair
+
+    # BTTS (event-level markets, when present).
+    pair = _demargin_pair(event, "btts",
+                          lambda o: "yes" in o["name"].lower(),
+                          lambda o: "no" in o["name"].lower())
+    if pair:
+        out["btts_yes"], out["btts_no"] = pair
+
+    return out
 
 
 def _dc_match(outcome_name: str, home: str, away: str, want: set[str]) -> bool:
@@ -312,14 +432,27 @@ async def fetch_market_odds(
             event = {**event, "bookmakers": event.get("bookmakers", []) + extra}
 
     resolvers = _market_resolvers(event["home_team"], event["away_team"])
+    sharp = sharp_probabilities(event, event["home_team"], event["away_team"])
+
     odds: dict[str, dict] = {}
     for key in wanted_keys:
         fn = resolvers.get(key)
         if not fn:
             continue
         best = fn(event)
-        if best:
-            odds[key] = {"odds": round(best[0], 3), "bookmaker": best[1]}
+        if not best:
+            continue
+        entry = {"odds": round(best[0], 3), "bookmaker": best[1]}
+        sp = sharp.get(key)
+        if sp and 0 < sp < 1:
+            sharp_fair = round(1.0 / sp, 3)
+            entry["sharp_prob"] = round(sp, 4)
+            entry["sharp_fair"] = sharp_fair
+            # Closing-line value: best available price vs the de-margined sharp
+            # fair price. Positive = you'd be beating the sharp line.
+            entry["clv_pct"] = round((best[0] / sharp_fair - 1) * 100, 2)
+            entry["beats_sharp"] = best[0] > sharp_fair
+        odds[key] = entry
 
     return {
         "event": {
@@ -329,4 +462,5 @@ async def fetch_market_odds(
             "bookmaker_count": len(event.get("bookmakers", [])),
         },
         "odds": odds,
+        "sharp": sharp,  # de-margined sharp probabilities per market key
     }

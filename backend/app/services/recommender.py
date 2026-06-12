@@ -38,6 +38,9 @@ CONFIDENCE_HIGH_MIN_SAMPLE = 8
 VALUE_MARGIN = 0.04
 ODDS_FLOOR = 1.30
 MAX_RECOMMENDATIONS = 2
+# Hard bankroll cap — quarter-Kelly already keeps stakes small, but never let a
+# single suggestion exceed this fraction of the bankroll (pro discipline).
+STAKE_CAP = 0.025
 
 # pt-BR labels for every market key the model exposes.
 MARKET_LABELS: dict[str, str] = {
@@ -113,11 +116,14 @@ class ValidatedRecommendation(BaseModel):
     # Real market odds (attached server-side from the-odds-api when available).
     market_odds: float | None = None       # best price across bookmakers
     market_bookmaker: str | None = None     # which book offers it
-    market_ev_pct: float | None = None      # true EV at that price vs fair odds
-    has_market_value: bool | None = None    # market_odds ≥ min_bookie_odds
-    # True when the model's probability is far above what even the best market
-    # price implies — vs sharp books that almost always means the model is
-    # wrong (e.g. World Cup opponent-strength bias), NOT real value.
+    market_ev_pct: float | None = None      # EV at that price vs our model fair
+    has_market_value: bool | None = None    # beats the sharp line (CLV > 0)
+    # Sharp (Pinnacle/exchange) de-margined line — the opponent-adjusted truth.
+    sharp_prob: float | None = None         # market's implied probability
+    clv_pct: float | None = None            # closing-line value: best vs sharp fair
+    # True when the model's probability is far above the sharp market's — vs
+    # sharp books that almost always means the model is wrong (e.g. World Cup
+    # opponent-strength bias), NOT real value.
     market_disagreement: bool | None = None
 
 
@@ -145,8 +151,13 @@ interpretar o dossiê JSON de um confronto de futebol e recomendar os mercados \
 mais sólidos — ou recomendar NÃO apostar.
 
 O dossiê contém:
-- model: probabilidades calculadas por um modelo Poisson/Dixon-Coles calibrado \
-(regressão à média + decaimento de forma). São a FONTE DA VERDADE quantitativa.
+- model: probabilidades do nosso modelo Poisson/Dixon-Coles calibrado \
+(regressão à média + decaimento de forma). É a NOSSA estimativa.
+- mercado (quando presente): probabilidades implícitas da LINHA AFIADA \
+(Pinnacle/exchange) já de-marginada, e o "edge" do modelo em pontos \
+percentuais. ESTA é a melhor estimativa de probabilidade disponível: o mercado \
+afiado já precifica força do adversário, mando, motivação e lesões. Use-a como \
+RÉGUA da realidade.
 - form: forma recente real de cada time (resultados, médias, sequência).
 - h2h: últimos confrontos diretos (pode estar vazio).
 - backtest: qualidade histórica do modelo nesta liga (skill > 0 = modelo \
@@ -177,15 +188,24 @@ mercados com ceticismo explícito e rebaixe a confiança neles.
 qualitativo, ou quando os dados são insuficientes/desatualizados. Dizer "não \
 aposte" é uma resposta valiosa — não force recomendação. Em teste real, \
 seguir recomendações fracas deu prejuízo; abster-se preservou a banca.
-8. REGRAS DE LUCRATIVIDADE (aprendidas em backtest com dinheiro simulado):
-   - Evite mercados com odd justa abaixo de ~1.30 (probabilidade > ~77%): \
-micro-odds raramente carregam valor nas casas e uma única derrota apaga \
-várias vitórias. Prefira a faixa de odd justa 1.30–2.50.
-   - O apostador SÓ deve apostar se a casa pagar ACIMA da odd mínima \
-informada (que já embute margem de valor). Reforce isso na justificativa \
-quando relevante.
-   - Entre dois mercados equivalentes, prefira o que tem skill positivo no \
-backtest da liga.
+8. REGRAS DE LUCRATIVIDADE E VALOR (a pergunta certa é "a odd está errada?", \
+não "quem ganha?"):
+   - VALOR vem de apostar quando a melhor odd das casas supera a linha afiada \
+de fechamento (CLV positivo). A previsão sozinha não gera lucro; o preço sim.
+   - Quando o dossiê traz "mercado": só recomende um mercado se o modelo \
+estiver ACIMA da probabilidade do mercado afiado (edge_modelo_pp positivo) — \
+isso é valor potencial. Se o modelo estiver ABAIXO do mercado, NÃO recomende.
+   - Mas desconfie de edge grande demais. Se o modelo estiver MUITO acima do \
+mercado afiado (edge > ~15 pp), é quase sempre o MODELO errado, não valor: o \
+mercado já pondera força do adversário. Uma sequência de vitórias contra \
+adversários fracos NÃO supera a vantagem preditiva de um time forte — o preço \
+afiado já sabe disso. Nesses casos, rebaixe a confiança e diga explicitamente \
+que há divergência com o mercado.
+   - Prefira mercados de MENOR margem: 1X2, Over/Under e Handicap Asiático. \
+Evite combos exóticos (resultado+gols) — margem alta, valor raro.
+   - Evite odd justa abaixo de ~1.30: micro-odds raramente carregam valor e \
+uma derrota apaga várias vitórias. Faixa ideal de odd justa: 1.30–3.00.
+   - Entre dois mercados, prefira o de skill positivo no backtest da liga.
 9. data_quality_notes: registre amostras pequenas, dados velhos (> 24h), H2H \
 vazio, divergência forte entre forma e modelo.
 10. Escreva em português do Brasil, tom direto e profissional. Nunca prometa \
@@ -268,7 +288,7 @@ def validate_report(
             model_probability=round(prob, 4),
             fair_odds=fair,
             min_bookie_odds=min_odds,
-            suggested_stake_pct=round(kelly / 4, 4),
+            suggested_stake_pct=round(min(kelly / 4, STAKE_CAP), 4),
             confidence=confidence,
             rationale=rec.rationale,
             caveats=caveats,

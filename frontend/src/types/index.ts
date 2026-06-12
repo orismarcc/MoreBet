@@ -259,6 +259,8 @@ export interface AgentRecommendation {
   market_bookmaker: string | null
   market_ev_pct: number | null
   has_market_value: boolean | null
+  sharp_prob: number | null
+  clv_pct: number | null
   market_disagreement: boolean | null
 }
 

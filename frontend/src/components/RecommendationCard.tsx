@@ -78,11 +78,11 @@ export default function RecommendationCard({ payload }: Props) {
         )}
       </div>
       <p className="text-xs text-surface-400 mb-4">
-        Agente lê o modelo, a forma recente, o H2H e o backtest da liga — e só
-        recomenda o que os dados sustentam. Comparamos com a <strong className="text-surface-300">melhor
-        odd real do mercado</strong> (Pinnacle, Betfair e ~20 casas): o selo
-        <span className="text-emerald-400 font-medium"> VALOR</span> acende quando a casa paga acima
-        da odd mínima. Trate confiança média/baixa como observação, não aposta.
+        O agente cruza o modelo com a <strong className="text-surface-300">linha afiada do mercado</strong> (Pinnacle/Betfair,
+        que já precifica força do adversário). A pergunta não é "quem ganha?", é
+        "a odd está errada?": o selo <span className="text-emerald-400 font-medium">VALOR</span> acende
+        só quando a melhor casa bate a linha de fechamento (CLV positivo). Quando o modelo
+        diverge forte do mercado, mostramos <span className="text-amber-400 font-medium">alerta</span>, não aposta.
       </p>
 
       {!report && !loading && (
@@ -158,6 +158,16 @@ export default function RecommendationCard({ payload }: Props) {
                           {(rec.model_probability * 100).toFixed(1)}%
                         </p>
                       </div>
+                      {rec.sharp_prob != null && (
+                        <div>
+                          <Tooltip content="Probabilidade implícita da linha afiada (Pinnacle/exchange) de-marginada. Já precifica força do adversário, mando e lesões — é a régua da realidade contra a qual o modelo é medido.">
+                            <p className="text-[11px] text-surface-400 border-b border-dotted border-surface-500 cursor-help">Prob. mercado</p>
+                          </Tooltip>
+                          <p className="font-mono font-semibold text-surface-200">
+                            {(rec.sharp_prob * 100).toFixed(1)}%
+                          </p>
+                        </div>
+                      )}
                       <div>
                         <Tooltip content="Odd justa + margem de valor (+4% de EV). Aposte SOMENTE se a casa pagar acima deste número — abaixo dele a aposta não tem vantagem matemática.">
                           <p className="text-[11px] text-surface-400 border-b border-dotted border-surface-500 cursor-help">
@@ -195,12 +205,14 @@ export default function RecommendationCard({ payload }: Props) {
                           </p>
                           <p className="font-mono font-bold text-white text-base leading-tight">
                             {rec.market_odds.toFixed(2)}
-                            {rec.market_ev_pct != null && !rec.market_disagreement && (
-                              <span className={`ml-2 text-xs font-semibold ${
-                                rec.market_ev_pct > 0 ? 'text-emerald-400' : 'text-surface-400'
-                              }`}>
-                                EV {rec.market_ev_pct > 0 ? '+' : ''}{rec.market_ev_pct.toFixed(1)}%
-                              </span>
+                            {rec.clv_pct != null && !rec.market_disagreement && (
+                              <Tooltip content="Closing Line Value: ganho vs a linha afiada de-marginada. Positivo = você bate o fechamento — o melhor preditor de lucro a longo prazo.">
+                                <span className={`ml-2 text-xs font-semibold cursor-help ${
+                                  rec.clv_pct > 0 ? 'text-emerald-400' : 'text-surface-400'
+                                }`}>
+                                  CLV {rec.clv_pct > 0 ? '+' : ''}{rec.clv_pct.toFixed(1)}%
+                                </span>
+                              </Tooltip>
                             )}
                           </p>
                         </div>
@@ -215,7 +227,7 @@ export default function RecommendationCard({ payload }: Props) {
                             <TrendingUp size={13} /> VALOR
                           </span>
                         ) : (
-                          <Tooltip content="A melhor odd disponível está abaixo da odd mínima — sem margem de valor agora. As odds mudam; reabra mais perto do jogo.">
+                          <Tooltip content="A melhor odd disponível não bate a linha afiada de fechamento — sem CLV positivo, logo sem valor esperado. Normal: valor real é raro. As odds mudam; reabra mais perto do jogo.">
                             <span className="flex items-center gap-1 text-[11px] font-medium text-surface-400 flex-shrink-0 cursor-help">
                               <TrendingDown size={13} /> sem valor
                             </span>
