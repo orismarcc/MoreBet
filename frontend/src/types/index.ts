@@ -259,6 +259,7 @@ export interface AgentRecommendation {
   market_bookmaker: string | null
   market_ev_pct: number | null
   has_market_value: boolean | null
+  market_disagreement: boolean | null
 }
 
 export interface MarketOddsEvent {

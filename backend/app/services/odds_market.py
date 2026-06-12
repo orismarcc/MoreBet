@@ -40,9 +40,13 @@ LEAGUE_TO_SPORT: dict[int, str] = {
 # the sport endpoint, so we skip them: those recommendations still show the
 # value bar, just without a real-odds comparison. Cost = markets × regions.
 _MARKETS = "h2h,totals"
+# Additional markets the agent often picks — only available at the event level.
+_EVENT_MARKETS = "double_chance,btts"
+_DC_BTTS = {"home_or_draw", "away_or_draw", "home_or_away", "btts_yes", "btts_no"}
 _REGIONS = "eu"
 _TTL = 1800.0  # 30 min — lines move, but not within a single analysis session
 _cache: dict[str, tuple[float, list]] = {}
+_event_cache: dict[str, tuple[float, list]] = {}  # event_id -> bookmakers
 
 # National-team / club naming differences between providers that token overlap
 # alone won't catch. Folded (lowercase, no accents) on both sides.
@@ -147,6 +151,37 @@ async def _fetch_sport(client: httpx.AsyncClient, sport_key: str) -> list[dict]:
         logger.info("the-odds-api: %s credits remaining after %s", remaining, sport_key)
     _cache[sport_key] = (now, events)
     return events
+
+
+async def _fetch_event_extra(
+    client: httpx.AsyncClient, sport_key: str, event_id: str,
+) -> list:
+    """Event-level bookmakers for double_chance/btts (not offered at the sport
+    level). Cached per event to conserve credits."""
+    now = time.monotonic()
+    hit = _event_cache.get(event_id)
+    if hit and now - hit[0] < _TTL:
+        return hit[1]
+    try:
+        r = await client.get(
+            f"{settings.odds_api_base_url}/sports/{sport_key}/events/{event_id}/odds",
+            params={
+                "apiKey": settings.odds_api_key,
+                "regions": _REGIONS,
+                "markets": _EVENT_MARKETS,
+                "oddsFormat": "decimal",
+            },
+        )
+        if r.status_code in (401, 404, 422):
+            _event_cache[event_id] = (now, [])
+            return []
+        r.raise_for_status()
+        bookmakers = r.json().get("bookmakers", [])
+    except httpx.HTTPError as exc:
+        logger.warning("the-odds-api event odds failed for %s: %s", event_id, exc)
+        return []
+    _event_cache[event_id] = (now, bookmakers)
+    return bookmakers
 
 
 def _best_h2h(event: dict, outcome_pred) -> tuple[float, str] | None:
@@ -264,6 +299,17 @@ async def fetch_market_odds(
     event = _find_event(events, home_name, away_name)
     if not event:
         return None
+
+    # Fetch double_chance/btts at the event level only when the agent picked
+    # one of those markets, then resolve against the combined bookmaker list.
+    if set(wanted_keys) & _DC_BTTS and event.get("id"):
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                extra = await _fetch_event_extra(client, sport, event["id"])
+        except httpx.HTTPError:
+            extra = []
+        if extra:
+            event = {**event, "bookmakers": event.get("bookmakers", []) + extra}
 
     resolvers = _market_resolvers(event["home_team"], event["away_team"])
     odds: dict[str, dict] = {}

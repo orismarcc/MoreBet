@@ -180,10 +180,12 @@ export default function RecommendationCard({ payload }: Props) {
                       </div>
                     </div>
 
-                    {/* Odd real do mercado + selo de valor (the-odds-api) */}
+                    {/* Odd real do mercado + selo de valor / alerta (the-odds-api) */}
                     {rec.market_odds != null ? (
                       <div className={`rounded-lg border px-3 py-2 flex items-center justify-between gap-2 ${
-                        rec.has_market_value
+                        rec.market_disagreement
+                          ? 'bg-amber-500/10 border-amber-500/40'
+                          : rec.has_market_value
                           ? 'bg-emerald-500/10 border-emerald-500/40'
                           : 'bg-surface-700/40 border-surface-500/40'
                       }`}>
@@ -193,7 +195,7 @@ export default function RecommendationCard({ payload }: Props) {
                           </p>
                           <p className="font-mono font-bold text-white text-base leading-tight">
                             {rec.market_odds.toFixed(2)}
-                            {rec.market_ev_pct != null && (
+                            {rec.market_ev_pct != null && !rec.market_disagreement && (
                               <span className={`ml-2 text-xs font-semibold ${
                                 rec.market_ev_pct > 0 ? 'text-emerald-400' : 'text-surface-400'
                               }`}>
@@ -202,7 +204,13 @@ export default function RecommendationCard({ payload }: Props) {
                             )}
                           </p>
                         </div>
-                        {rec.has_market_value ? (
+                        {rec.market_disagreement ? (
+                          <Tooltip content="O modelo aponta probabilidade muito acima do que o mercado (casas afiadas) precifica. Vs Pinnacle/Betfair, isso quase sempre indica que o MODELO está errado — não que há valor. Aqui, provável superestimação por força do adversário (viés da Copa). Não trate como aposta de valor.">
+                            <span className="flex items-center gap-1 text-[11px] font-semibold text-amber-400 flex-shrink-0 cursor-help">
+                              <AlertTriangle size={13} /> diverge do mercado
+                            </span>
+                          </Tooltip>
+                        ) : rec.has_market_value ? (
                           <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-400 flex-shrink-0">
                             <TrendingUp size={13} /> VALOR
                           </span>

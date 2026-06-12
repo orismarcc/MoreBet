@@ -115,6 +115,10 @@ class ValidatedRecommendation(BaseModel):
     market_bookmaker: str | None = None     # which book offers it
     market_ev_pct: float | None = None      # true EV at that price vs fair odds
     has_market_value: bool | None = None    # market_odds ≥ min_bookie_odds
+    # True when the model's probability is far above what even the best market
+    # price implies — vs sharp books that almost always means the model is
+    # wrong (e.g. World Cup opponent-strength bias), NOT real value.
+    market_disagreement: bool | None = None
 
 
 class MarketOddsEvent(BaseModel):

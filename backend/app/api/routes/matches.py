@@ -358,6 +358,11 @@ async def _attach_market_odds(report, league_api_id: int, home: str, away: str) 
         rec.market_bookmaker = entry["bookmaker"]
         rec.market_ev_pct = round((entry["odds"] / rec.fair_odds - 1) * 100, 2)
         rec.has_market_value = entry["odds"] >= rec.min_bookie_odds
+        # Sharp-market reality check: if our probability sits ≥15 points above
+        # what even the best available price implies, the model — not the
+        # market — is the outlier. Flag it so the UI doesn't scream "value".
+        implied = 1.0 / entry["odds"]
+        rec.market_disagreement = (rec.model_probability - implied) > 0.15
 
 
 @router.post("/value", response_model=ValueCheckOut)
