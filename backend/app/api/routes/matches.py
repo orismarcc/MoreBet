@@ -22,6 +22,7 @@ from app.core.engine import TeamInput, analyse_match
 from app.core.strength import LeagueAverages
 from app.core.odds import calc_value
 from app.services import recommender
+from app.services import odds_market
 from app.services.football_data import (
     FD_LEAGUES,
     fetch_head_to_head,
@@ -321,7 +322,7 @@ async def recommend_match(payload: CalculateMatchIn, db: Session = Depends(get_d
     min_sample = min(home_team.home_played or 0, away_team.away_played or 0)
     skill = backtest.get("skill_1x2") if backtest else None
     try:
-        return await recommender.generate_recommendation(
+        report = await recommender.generate_recommendation(
             cache_key=(home_team.id, away_team.id),
             dossier=dossier,
             markets=markets,
@@ -330,6 +331,33 @@ async def recommend_match(payload: CalculateMatchIn, db: Session = Depends(get_d
         )
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Falha no agente: {e}")
+
+    # Close the value loop: attach REAL bookmaker odds (the-odds-api) to each
+    # recommendation and flag whether the value bar is actually cleared. Done
+    # after generation (and on cache hits) so prices stay fresh; best-effort.
+    await _attach_market_odds(report, league.api_id, home_team.name, away_team.name)
+    return report
+
+
+async def _attach_market_odds(report, league_api_id: int, home: str, away: str) -> None:
+    if not odds_market.is_configured() or not report.recommendations:
+        return
+    wanted = [r.market for r in report.recommendations]
+    try:
+        mo = await odds_market.fetch_market_odds(league_api_id, home, away, wanted)
+    except Exception:
+        return
+    if not mo:
+        return
+    report.market_odds_event = recommender.MarketOddsEvent(**mo["event"])
+    for rec in report.recommendations:
+        entry = mo["odds"].get(rec.market)
+        if not entry:
+            continue
+        rec.market_odds = entry["odds"]
+        rec.market_bookmaker = entry["bookmaker"]
+        rec.market_ev_pct = round((entry["odds"] / rec.fair_odds - 1) * 100, 2)
+        rec.has_market_value = entry["odds"] >= rec.min_bookie_odds
 
 
 @router.post("/value", response_model=ValueCheckOut)

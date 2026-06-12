@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Sparkles, AlertTriangle, ShieldCheck, ShieldAlert, Shield,
-  Info, Loader2, Ban, RefreshCw,
+  Info, Loader2, Ban, RefreshCw, TrendingUp, TrendingDown,
 } from 'lucide-react'
 import type {
   CalculateMatchPayload, RecommendationReport, RecommendationConfidence,
@@ -79,9 +79,10 @@ export default function RecommendationCard({ payload }: Props) {
       </div>
       <p className="text-xs text-surface-400 mb-4">
         Agente lê o modelo, a forma recente, o H2H e o backtest da liga — e só
-        recomenda o que os dados sustentam. A odd mínima já embute margem de
-        valor: <strong className="text-surface-300">aposte apenas se a casa pagar acima dela</strong>,
-        e trate confiança média/baixa como observação, não aposta.
+        recomenda o que os dados sustentam. Comparamos com a <strong className="text-surface-300">melhor
+        odd real do mercado</strong> (Pinnacle, Betfair e ~20 casas): o selo
+        <span className="text-emerald-400 font-medium"> VALOR</span> acende quando a casa paga acima
+        da odd mínima. Trate confiança média/baixa como observação, não aposta.
       </p>
 
       {!report && !loading && (
@@ -179,6 +180,46 @@ export default function RecommendationCard({ payload }: Props) {
                       </div>
                     </div>
 
+                    {/* Odd real do mercado + selo de valor (the-odds-api) */}
+                    {rec.market_odds != null ? (
+                      <div className={`rounded-lg border px-3 py-2 flex items-center justify-between gap-2 ${
+                        rec.has_market_value
+                          ? 'bg-emerald-500/10 border-emerald-500/40'
+                          : 'bg-surface-700/40 border-surface-500/40'
+                      }`}>
+                        <div className="min-w-0">
+                          <p className="text-[11px] text-surface-400">
+                            Melhor odd real {rec.market_bookmaker ? `· ${rec.market_bookmaker}` : ''}
+                          </p>
+                          <p className="font-mono font-bold text-white text-base leading-tight">
+                            {rec.market_odds.toFixed(2)}
+                            {rec.market_ev_pct != null && (
+                              <span className={`ml-2 text-xs font-semibold ${
+                                rec.market_ev_pct > 0 ? 'text-emerald-400' : 'text-surface-400'
+                              }`}>
+                                EV {rec.market_ev_pct > 0 ? '+' : ''}{rec.market_ev_pct.toFixed(1)}%
+                              </span>
+                            )}
+                          </p>
+                        </div>
+                        {rec.has_market_value ? (
+                          <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-400 flex-shrink-0">
+                            <TrendingUp size={13} /> VALOR
+                          </span>
+                        ) : (
+                          <Tooltip content="A melhor odd disponível está abaixo da odd mínima — sem margem de valor agora. As odds mudam; reabra mais perto do jogo.">
+                            <span className="flex items-center gap-1 text-[11px] font-medium text-surface-400 flex-shrink-0 cursor-help">
+                              <TrendingDown size={13} /> sem valor
+                            </span>
+                          </Tooltip>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-surface-500">
+                        Odd real indisponível para este mercado/jogo.
+                      </p>
+                    )}
+
                     <p className="text-xs text-surface-300 leading-relaxed flex-1">
                       {rec.rationale}
                     </p>
@@ -216,7 +257,10 @@ export default function RecommendationCard({ payload }: Props) {
             )}
 
             <p className="text-[10px] text-surface-500">
-              Gerado por {report.model_id}{report.cached ? ' (cache)' : ''} ·
+              Gerado por {report.model_id}{report.cached ? ' (cache)' : ''}
+              {report.market_odds_event
+                ? ` · odds reais de ${report.market_odds_event.bookmaker_count} casas`
+                : ' · odds de mercado indisponíveis para este jogo'} ·
               apostas envolvem risco — nada aqui é garantia de lucro.
             </p>
           </motion.div>

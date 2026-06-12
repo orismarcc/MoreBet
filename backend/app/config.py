@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     anthropic_api_key: str = ""
     anthropic_model: str = "claude-opus-4-8"
 
+    # the-odds-api — real bookmaker odds (value detection). Empty key simply
+    # means recommendations come without market-odds comparison.
+    odds_api_key: str = ""
+    odds_api_base_url: str = "https://api.the-odds-api.com/v4"
+
     @property
     def cors_origins_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",")]

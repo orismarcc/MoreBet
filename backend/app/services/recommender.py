@@ -110,6 +110,18 @@ class ValidatedRecommendation(BaseModel):
     confidence: Confidence
     rationale: str
     caveats: list[str]
+    # Real market odds (attached server-side from the-odds-api when available).
+    market_odds: float | None = None       # best price across bookmakers
+    market_bookmaker: str | None = None     # which book offers it
+    market_ev_pct: float | None = None      # true EV at that price vs fair odds
+    has_market_value: bool | None = None    # market_odds ≥ min_bookie_odds
+
+
+class MarketOddsEvent(BaseModel):
+    home: str
+    away: str
+    commence_time: str | None = None
+    bookmaker_count: int
 
 
 class RecommendationReport(BaseModel):
@@ -119,6 +131,8 @@ class RecommendationReport(BaseModel):
     data_quality_notes: list[str]
     model_id: str
     cached: bool = False
+    # Present when real market odds were located for this matchup.
+    market_odds_event: MarketOddsEvent | None = None
 
 
 SYSTEM_PROMPT = """\

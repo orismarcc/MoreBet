@@ -255,6 +255,17 @@ export interface AgentRecommendation {
   confidence: RecommendationConfidence
   rationale: string
   caveats: string[]
+  market_odds: number | null
+  market_bookmaker: string | null
+  market_ev_pct: number | null
+  has_market_value: boolean | null
+}
+
+export interface MarketOddsEvent {
+  home: string
+  away: string
+  commence_time: string | null
+  bookmaker_count: number
 }
 
 export interface RecommendationReport {
@@ -264,6 +275,7 @@ export interface RecommendationReport {
   data_quality_notes: string[]
   model_id: string
   cached: boolean
+  market_odds_event: MarketOddsEvent | null
 }
 
 // ── Backtest ─────────────────────────────────────────────────────────────────
