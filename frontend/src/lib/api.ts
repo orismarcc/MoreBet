@@ -50,6 +50,9 @@ export const leaguesApi = {
     api.post<import('../types').BacktestReport>(`/leagues/${leagueApiId}/backtest`, undefined, {
       timeout: 120_000,
     }).then(r => r.data),
+  standings: (leagueApiId: number) =>
+    api.get<import('../types').StandingGroup[]>(`/leagues/${leagueApiId}/standings`)
+      .then(r => r.data),
 }
 
 export const teamsApi = {

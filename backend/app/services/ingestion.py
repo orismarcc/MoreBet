@@ -30,21 +30,36 @@ async def ingest_league(db: Session, league_id: int) -> League:
                 setattr(league, k, v)
         db.flush()
 
-        # The provider switch changed team api_ids, so old rows can't be matched
-        # by id. Wipe this league's teams (and their dependents) and re-import a
-        # clean set to avoid stale duplicates.
-        old_ids = [t.id for t in db.query(Team).filter(Team.league_id == league.id).all()]
-        if old_ids:
-            db.query(Player).filter(Player.team_id.in_(old_ids)).delete(synchronize_session=False)
-            db.query(Match).filter(
-                (Match.home_team_id.in_(old_ids)) | (Match.away_team_id.in_(old_ids))
-            ).delete(synchronize_session=False)
-            db.query(Team).filter(Team.league_id == league.id).delete(synchronize_session=False)
-            db.flush()
-
+        # UPSERT by api_id so team db ids stay STABLE across refreshes. Wiping
+        # and re-inserting (old behaviour) handed every team a new id on each
+        # refresh, which silently invalidated ids the frontend was holding —
+        # the real cause of "Dados indisponíveis" right after "Atualizar". The
+        # provider (football-data) keeps api_ids stable, so we can match on them.
+        existing = {
+            t.api_id: t
+            for t in db.query(Team).filter(Team.league_id == league.id).all()
+        }
+        seen_api_ids: set[int] = set()
+        now = datetime.now(timezone.utc)
         for td in teams_data:
-            team = Team(league_id=league.id, last_updated=datetime.now(timezone.utc), **td)
-            db.add(team)
+            seen_api_ids.add(td["api_id"])
+            team = existing.get(td["api_id"])
+            if team:
+                for k, v in td.items():
+                    setattr(team, k, v)
+                team.last_updated = now
+            else:
+                db.add(Team(league_id=league.id, last_updated=now, **td))
+
+        # Remove only teams that genuinely left the league (relegated/replaced),
+        # along with their dependents — keeps ids stable for everyone else.
+        stale = [t.id for aid, t in existing.items() if aid not in seen_api_ids]
+        if stale:
+            db.query(Player).filter(Player.team_id.in_(stale)).delete(synchronize_session=False)
+            db.query(Match).filter(
+                (Match.home_team_id.in_(stale)) | (Match.away_team_id.in_(stale))
+            ).delete(synchronize_session=False)
+            db.query(Team).filter(Team.id.in_(stale)).delete(synchronize_session=False)
         db.flush()
 
         _update_league_averages(league, teams_data)

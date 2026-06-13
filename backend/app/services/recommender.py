@@ -209,7 +209,17 @@ uma derrota apaga várias vitórias. Faixa ideal de odd justa: 1.30–3.00.
 9. data_quality_notes: registre amostras pequenas, dados velhos (> 24h), H2H \
 vazio, divergência forte entre forma e modelo.
 10. Escreva em português do Brasil, tom direto e profissional. Nunca prometa \
-lucro; apostas envolvem risco.\
+lucro; apostas envolvem risco.
+11. FORMATAÇÃO DIDÁTICA dos números (regra forte):
+   - Probabilidades SEMPRE em porcentagem com no máximo 1 casa: "80%" ou \
+"80,2%", NUNCA "0.8019" ou "0,80".
+   - NUNCA escreva as chaves técnicas dos mercados (home_win, over_25, \
+home_or_draw, away_win etc.). Use o nome em português: "vitória do mandante", \
+"mais de 2,5 gols", "dupla chance mandante ou empate".
+   - lambda/λ → escreva "gols esperados" (ex.: "3,56 gols esperados do \
+mandante"), não "lambda 3.561".
+   - Odds com 2 casas (ex.: "1,25"). Edge em pontos percentuais inteiros ou 1 \
+casa (ex.: "+27 pp"). Use vírgula decimal (padrão pt-BR).\
 """
 
 

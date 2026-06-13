@@ -657,6 +657,41 @@ def build_form_summary(matches: list[dict]) -> dict:
     }
 
 
+async def fetch_standings(client: httpx.AsyncClient, league_id: int) -> list[dict]:
+    """League table(s). One TOTAL table for leagues; several group tables for
+    tournaments (World Cup). Returns [{group, rows:[...]}] cached for 15 min."""
+    code = _code(league_id)
+    data = await _cached_get(
+        client,
+        f"{settings.football_data_base_url}/competitions/{code}/standings",
+        ttl=_TTL_LEAGUE_FIXTURES,
+    )
+    groups: list[dict] = []
+    for st in data.get("standings", []):
+        if st.get("type") != "TOTAL":
+            continue
+        rows = []
+        for r in st.get("table", []):
+            t = r.get("team", {})
+            rows.append({
+                "position": r.get("position"),
+                "team_api_id": t.get("id"),
+                "team_name": t.get("name"),
+                "team_crest": t.get("crest"),
+                "played": r.get("playedGames"),
+                "won": r.get("won"),
+                "draw": r.get("draw"),
+                "lost": r.get("lost"),
+                "goals_for": r.get("goalsFor"),
+                "goals_against": r.get("goalsAgainst"),
+                "goal_difference": r.get("goalDifference"),
+                "points": r.get("points"),
+            })
+        if rows:
+            groups.append({"group": st.get("group"), "rows": rows})
+    return groups
+
+
 async def fetch_team_form(
     client: httpx.AsyncClient, team_api_id: int, team_name: str | None,
     limit: int = 6, league_hint: str | None = None,

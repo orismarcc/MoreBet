@@ -7,7 +7,8 @@ from app.core.backtest import run_backtest
 from app.db.database import get_db
 from app.models.orm import League
 from app.models.schemas import LeagueOut
-from app.services.football_data import FD_LEAGUES, fetch_league_finished_matches
+from app.models.orm import Team
+from app.services.football_data import FD_LEAGUES, fetch_league_finished_matches, fetch_standings
 from app.services.ingestion import ingest_league, ingest_all_leagues
 
 router = APIRouter(prefix="/leagues", tags=["leagues"])
@@ -15,6 +16,27 @@ router = APIRouter(prefix="/leagues", tags=["leagues"])
 
 class RefreshAllOut(BaseModel):
     results: list[str]
+
+
+class StandingRow(BaseModel):
+    position: int | None
+    team_api_id: int | None
+    team_name: str | None
+    team_crest: str | None
+    played: int | None
+    won: int | None
+    draw: int | None
+    lost: int | None
+    goals_for: int | None
+    goals_against: int | None
+    goal_difference: int | None
+    points: int | None
+    db_id: int | None = None   # internal team id when ingested (for analysis)
+
+
+class StandingGroup(BaseModel):
+    group: str | None
+    rows: list[StandingRow]
 
 
 class CalibrationBucketOut(BaseModel):
@@ -60,6 +82,29 @@ def get_league(league_id: int, db: Session = Depends(get_db)):
     if not league:
         raise HTTPException(status_code=404, detail="League not found")
     return league
+
+
+@router.get("/{league_api_id}/standings", response_model=list[StandingGroup])
+async def league_standings(league_api_id: int, db: Session = Depends(get_db)):
+    """Current league table(s), enriched with our internal team db ids so the
+    UI can deep-link a row into analysis."""
+    if league_api_id not in FD_LEAGUES:
+        raise HTTPException(status_code=404, detail="League not supported")
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            groups = await fetch_standings(client, league_api_id)
+    except httpx.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Data provider error: {e}")
+
+    api_ids = {r["team_api_id"] for g in groups for r in g["rows"] if r["team_api_id"]}
+    db_ids = {}
+    if api_ids:
+        rows = db.query(Team.api_id, Team.id).filter(Team.api_id.in_(api_ids)).all()
+        db_ids = {aid: tid for aid, tid in rows}
+    for g in groups:
+        for r in g["rows"]:
+            r["db_id"] = db_ids.get(r["team_api_id"])
+    return groups
 
 
 @router.post("/{league_api_id}/refresh", response_model=LeagueOut)

@@ -43,21 +43,26 @@ function useAuth() {
 export default function App() {
   const { token, email, login, logout } = useAuth()
   const toast = useToast()
-  const [page, setPage] = useState<Page>('analyse')
+  // Active page persists across refresh so a reload keeps you where you were.
+  const [page, setPage] = useState<Page>(() => {
+    const saved = localStorage.getItem('morebet_page')
+    return saved === 'fixtures' || saved === 'teams' || saved === 'analyse' ? saved : 'analyse'
+  })
   const [view, setView] = useState<View>('selector')
   const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null)
-  const [loading, setLoading] = useState(false)
 
   if (!token) return <Login onLogin={login} />
 
   function navigate(p: Page) {
     setPage(p)
+    localStorage.setItem('morebet_page', p)
     if (p !== 'analyse') setView('selector')
   }
 
-  // Chamado de "Próximos Jogos" com apenas mandante+visitante
+  // Chamado de fixtures/standings/times com apenas mandante+visitante
   async function handleQuickAnalyse(homeTeam: Team, awayTeam: Team) {
     setPage('analyse')
+    localStorage.setItem('morebet_page', 'analyse')
     await handleAnalyse(homeTeam, awayTeam, [], [], 0.4)
   }
 
@@ -68,7 +73,6 @@ export default function App() {
     absentAway: AbsentPlayer[],
     xgWeight: number,
   ) {
-    setLoading(true)
     try {
       const result = await matchesApi.calculate({
         home_team_id: homeTeam.id,
@@ -86,8 +90,6 @@ export default function App() {
           ?? 'Erro ao calcular. Tente novamente.'
         : 'Erro ao calcular. Tente novamente.'
       toast.error(msg)
-    } finally {
-      setLoading(false)
     }
   }
 
@@ -156,9 +158,8 @@ export default function App() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.22 }}
-              className="max-w-2xl mx-auto"
             >
-              <MatchSelector onAnalyse={handleAnalyse} loading={loading} />
+              <MatchSelector onAnalyse={handleQuickAnalyse} />
             </motion.div>
           )}
 

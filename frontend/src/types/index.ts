@@ -264,6 +264,27 @@ export interface AgentRecommendation {
   market_disagreement: boolean | null
 }
 
+export interface StandingRow {
+  position: number | null
+  team_api_id: number | null
+  team_name: string | null
+  team_crest: string | null
+  played: number | null
+  won: number | null
+  draw: number | null
+  lost: number | null
+  goals_for: number | null
+  goals_against: number | null
+  goal_difference: number | null
+  points: number | null
+  db_id: number | null
+}
+
+export interface StandingGroup {
+  group: string | null
+  rows: StandingRow[]
+}
+
 export interface MarketOddsEvent {
   home: string
   away: string
