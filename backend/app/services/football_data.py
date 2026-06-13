@@ -615,6 +615,7 @@ async def fetch_team_upcoming_matches(
             "match_id": m["id"],
             "date": m["utcDate"],
             "competition": comp.get("name"),
+            "competition_code": comp.get("code"),
             "competition_emblem": comp.get("emblem"),
             "is_home": is_home,
             "opponent": opp["name"],
