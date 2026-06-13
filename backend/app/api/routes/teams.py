@@ -241,7 +241,11 @@ async def get_team_competitions(api_id: int, db: Session = Depends(get_db)):
     team = db.query(Team).filter(Team.api_id == api_id).first()
 
     out: list[TeamCompetition] = []
-    seen: set[str] = set()
+    # Dedup by both folded name and competition code — the DB league name
+    # ("Brasileirão Série A") often differs from the provider's match name
+    # ("Campeonato Brasileiro Série A") for the very same competition.
+    seen_names: set[str] = set()
+    seen_codes: set[str] = set()
 
     # Domestic / home competition from the DB — guaranteed and clickable even if
     # the recent-match window happens to be all continental games.
@@ -251,7 +255,12 @@ async def get_team_competitions(api_id: int, db: Session = Depends(get_db)):
             out.append(TeamCompetition(
                 name=league.name, league_api_id=league.api_id, emblem=league.logo_url,
             ))
-            seen.add(_fold(league.name))
+            seen_names.add(_fold(league.name))
+            seen_codes.add(FD_LEAGUES[league.api_id][0])
+            # The public stats source labels the World Cup differently than our
+            # DB does — fold those aliases in so it doesn't show up twice.
+            if league.api_id == 1:
+                seen_names.update({_fold("FIFA World Cup"), _fold("World Cup")})
 
     # Everything else the team has been/will be playing (Champions League, cups,
     # friendlies, qualifiers…) as info-only chips.
@@ -264,9 +273,15 @@ async def get_team_competitions(api_id: int, db: Session = Depends(get_db)):
 
     for m in list(payload.get("matches", [])) + list(payload.get("upcoming", [])):
         name = m.get("competition")
-        if name and _fold(name) not in seen:
-            seen.add(_fold(name))
-            out.append(TeamCompetition(name=name, emblem=m.get("competition_emblem")))
+        code = m.get("competition_code")
+        if not name:
+            continue
+        if (code and code in seen_codes) or _fold(name) in seen_names:
+            continue
+        seen_names.add(_fold(name))
+        if code:
+            seen_codes.add(code)
+        out.append(TeamCompetition(name=name, emblem=m.get("competition_emblem")))
 
     return out
 
