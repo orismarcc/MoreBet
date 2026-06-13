@@ -294,7 +294,7 @@ def _ordered_books(event: dict) -> list[dict]:
     """Bookmakers sorted sharpest-first."""
     return sorted(
         event.get("bookmakers", []),
-        key=lambda b: _SHARP_BOOKS.index(b["key"]) if b["key"] in _SHARP_BOOKS else 999,
+        key=lambda b: _SHARP_BOOKS.index(b["key"]) if b.get("key") in _SHARP_BOOKS else 999,
     )
 
 
@@ -303,12 +303,13 @@ def _demargin_pair(event: dict, market_key: str, pred_a, pred_b) -> tuple[float,
     de-margined (prob_a, prob_b). Per-line so we benchmark the exact line we
     quote (books disagree on the main line)."""
     for bm in _ordered_books(event):
-        mkt = next((m for m in bm["markets"] if m["key"] == market_key), None)
+        mkt = next((m for m in bm.get("markets", []) if m.get("key") == market_key), None)
         if not mkt:
             continue
-        oa = next((o for o in mkt["outcomes"] if pred_a(o)), None)
-        ob = next((o for o in mkt["outcomes"] if pred_b(o)), None)
-        if oa and ob:
+        outs = mkt.get("outcomes", [])
+        oa = next((o for o in outs if pred_a(o)), None)
+        ob = next((o for o in outs if pred_b(o)), None)
+        if oa and ob and oa.get("price") and ob.get("price"):
             probs = _demargin([oa["price"], ob["price"]])
             if len(probs) == 2:
                 return probs[0], probs[1]
@@ -323,12 +324,13 @@ def sharp_probabilities(event: dict, home: str, away: str) -> dict[str, float]:
 
     # 1X2 (three-way) from the sharpest book offering it (+ derived dbl chance).
     for bm in _ordered_books(event):
-        mkt = next((m for m in bm["markets"] if m["key"] == "h2h"), None)
+        mkt = next((m for m in bm.get("markets", []) if m.get("key") == "h2h"), None)
         if not mkt:
             continue
-        h = next((o for o in mkt["outcomes"] if _name_match(o["name"], home)), None)
-        a = next((o for o in mkt["outcomes"] if _name_match(o["name"], away)), None)
-        d = next((o for o in mkt["outcomes"] if o["name"].lower() == "draw"), None)
+        outs = mkt.get("outcomes", [])
+        h = next((o for o in outs if _name_match(o.get("name", ""), home)), None)
+        a = next((o for o in outs if _name_match(o.get("name", ""), away)), None)
+        d = next((o for o in outs if o.get("name", "").lower() == "draw"), None)
         if h and a and d:
             probs = _demargin([h["price"], d["price"], a["price"]])
             if len(probs) == 3:
