@@ -1,7 +1,7 @@
 import logging
 import secrets
 
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -9,6 +9,10 @@ _DEFAULT_JWT_SECRET = "change-me-in-production-use-long-random-string"
 
 
 class Settings(BaseSettings):
+    # env_file for local dev; extra="ignore" so stale/legacy keys in .env (e.g.
+    # the old API-Football provider) never crash the app or the test suite.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     # Primary data provider: football-data.org (free tier covers current season)
     football_data_key: str = ""
     football_data_base_url: str = "https://api.football-data.org/v4"
@@ -40,12 +44,6 @@ class Settings(BaseSettings):
     @property
     def is_production(self) -> bool:
         return self.app_env.lower() in {"production", "prod"}
-
-    class Config:
-        env_file = ".env"
-        # Stale/legacy keys in .env (e.g. from the old API-Football provider)
-        # must not crash the app or the test suite.
-        extra = "ignore"
 
 
 settings = Settings()
