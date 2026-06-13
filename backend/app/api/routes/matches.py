@@ -27,9 +27,10 @@ from app.services.football_data import (
     FD_LEAGUES,
     fetch_head_to_head,
     fetch_league_finished_matches,
+    fetch_team_form,
     fetch_team_recent_matches,
 )
-from app.services.espn import fetch_match_details
+from app.services.espn import fetch_match_details, head_to_head_internationals as espn_head_to_head
 
 router = APIRouter(prefix="/matches", tags=["matches"])
 
@@ -251,12 +252,18 @@ async def recommend_match(payload: CalculateMatchIn, db: Session = Depends(get_d
     backtest = None
     try:
         async with httpx.AsyncClient(timeout=45.0) as client:
-            form_home = await fetch_team_recent_matches(
-                client, home_team.api_id, limit=6, league_hint=hint)
-            form_away = await fetch_team_recent_matches(
-                client, away_team.api_id, limit=6, league_hint=hint)
+            # fetch_team_form falls back to ESPN internationals for national
+            # teams, so the agent isn't blind to form during the World Cup.
+            form_home = await fetch_team_form(
+                client, home_team.api_id, home_team.name, limit=6, league_hint=hint)
+            form_away = await fetch_team_form(
+                client, away_team.api_id, away_team.name, limit=6, league_hint=hint)
             h2h = await fetch_head_to_head(
                 client, home_team.api_id, away_team.api_id, limit=5, league_hint=hint)
+            # National teams rarely meet in the club provider's data — fall back
+            # to their international meetings (friendlies/qualifiers) via ESPN.
+            if not h2h:
+                h2h = await espn_head_to_head(client, home_team.name, away_team.name, limit=3)
             backtest = await _backtest_summary(client, league.api_id)
     except httpx.HTTPError:
         pass

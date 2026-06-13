@@ -657,6 +657,25 @@ def build_form_summary(matches: list[dict]) -> dict:
     }
 
 
+async def fetch_team_form(
+    client: httpx.AsyncClient, team_api_id: int, team_name: str | None,
+    limit: int = 6, league_hint: str | None = None,
+) -> dict:
+    """Recent form with an internationals fallback for national teams — the club
+    provider has no history for them, so World Cup sides would otherwise look
+    formless. Falls back to ESPN friendlies/qualifiers keyed by name."""
+    payload = await fetch_team_recent_matches(client, team_api_id, limit, league_hint)
+    if payload["summary"]["played"] == 0 and team_name:
+        from app.services import espn as espn_svc
+        try:
+            intl = await espn_svc.recent_internationals_by_name(client, team_name, limit)
+        except Exception:
+            intl = None
+        if intl:
+            return {"summary": build_form_summary(intl), "matches": intl}
+    return payload
+
+
 async def fetch_team_recent_matches(
     client: httpx.AsyncClient, team_api_id: int, limit: int = 6,
     league_hint: str | None = None,

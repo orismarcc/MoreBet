@@ -311,6 +311,33 @@ async def fetch_team_intl_results(
     return out[:limit]
 
 
+async def head_to_head_internationals(
+    client: httpx.AsyncClient, home_name: str, away_name: str, limit: int = 3,
+) -> list[dict]:
+    """Recent direct meetings between two national teams (friendlies +
+    qualifiers via ESPN), in the dossier H2H shape. Reuses the cached
+    internationals list of `home_name`, so it costs no extra network call when
+    form was already fetched."""
+    res = await recent_internationals_by_name(client, home_name, limit=40)
+    if not res:
+        return []
+    out: list[dict] = []
+    for m in res:
+        if not _teams_match(m["opponent"], away_name):
+            continue
+        if m["is_home"]:
+            hn, an, hg, ag = home_name, m["opponent"], m["goals_for"], m["goals_against"]
+        else:
+            hn, an, hg, ag = m["opponent"], home_name, m["goals_against"], m["goals_for"]
+        out.append({
+            "date": m["date"], "competition": m["competition"],
+            "home_name": hn, "away_name": an, "home_goals": hg, "away_goals": ag,
+        })
+        if len(out) >= limit:
+            break
+    return out
+
+
 async def recent_internationals_by_name(
     client: httpx.AsyncClient, team_name: str, limit: int = 10
 ) -> list[dict] | None:
