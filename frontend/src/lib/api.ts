@@ -75,6 +75,9 @@ export const teamsApi = {
     api.get<import('../types').TeamSearchResult[]>('/teams/search', {
       params: { q },
     }).then(r => r.data),
+  competitions: (apiId: number) =>
+    api.get<import('../types').TeamCompetition[]>(`/teams/api/${apiId}/competitions`)
+      .then(r => r.data),
 }
 
 export const matchesApi = {

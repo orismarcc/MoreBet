@@ -1,16 +1,18 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { ListOrdered } from 'lucide-react'
-import type { StandingGroup } from '../types'
+import type { StandingGroup, StandingRow } from '../types'
 import { leaguesApi } from '../lib/api'
 import Spinner from './Spinner'
 import Tooltip from './Tooltip'
 
 interface Props {
   leagueApiId: number
+  /** Click a row to open that team's full profile (same data as a search). */
+  onTeamClick?: (row: StandingRow) => void
 }
 
-function Table({ rows }: { rows: StandingGroup['rows'] }) {
+function Table({ rows, onTeamClick }: { rows: StandingGroup['rows']; onTeamClick?: (row: StandingRow) => void }) {
   return (
     <div className="overflow-x-auto -mx-1">
       <table className="w-full text-sm border-collapse">
@@ -27,16 +29,21 @@ function Table({ rows }: { rows: StandingGroup['rows'] }) {
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
+          {rows.map((r, i) => {
+            const clickable = !!onTeamClick && r.team_api_id != null
+            return (
             <tr
               key={r.team_api_id ?? i}
-              className="border-t border-surface-700/60 hover:bg-surface-700/30 transition-colors"
+              onClick={clickable ? () => onTeamClick!(r) : undefined}
+              className={`border-t border-surface-700/60 transition-colors ${
+                clickable ? 'cursor-pointer hover:bg-brand-500/10' : 'hover:bg-surface-700/30'
+              }`}
             >
               <td className="py-1.5 pl-1 text-surface-400 tabular-nums">{r.position}</td>
               <td className="py-1.5">
                 <div className="flex items-center gap-2 min-w-0">
                   {r.team_crest && <img src={r.team_crest} alt="" className="w-4 h-4 object-contain flex-shrink-0" />}
-                  <span className="text-white truncate">{r.team_name}</span>
+                  <span className={`truncate ${clickable ? 'text-white hover:text-brand-300' : 'text-white'}`}>{r.team_name}</span>
                 </div>
               </td>
               <td className="text-center text-surface-300 tabular-nums">{r.played}</td>
@@ -48,14 +55,15 @@ function Table({ rows }: { rows: StandingGroup['rows'] }) {
               </td>
               <td className="text-center font-semibold text-white tabular-nums">{r.points}</td>
             </tr>
-          ))}
+            )
+          })}
         </tbody>
       </table>
     </div>
   )
 }
 
-export default function LeagueStandings({ leagueApiId }: Props) {
+export default function LeagueStandings({ leagueApiId, onTeamClick }: Props) {
   const [groups, setGroups] = useState<StandingGroup[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(false)
@@ -95,7 +103,7 @@ export default function LeagueStandings({ leagueApiId }: Props) {
               {g.group && (
                 <p className="text-xs font-semibold text-surface-300 mb-1">{g.group}</p>
               )}
-              <Table rows={g.rows} />
+              <Table rows={g.rows} onTeamClick={onTeamClick} />
             </div>
           ))}
         </div>

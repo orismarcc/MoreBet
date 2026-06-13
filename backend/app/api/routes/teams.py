@@ -91,6 +91,15 @@ class RecentForm(BaseModel):
     upcoming: list[UpcomingTeamMatch] = []
 
 
+class TeamCompetition(BaseModel):
+    name: str
+    # When set, the chip is clickable and opens that league's standings/fixtures.
+    # Only competitions we actually model (the team's domestic league, the World
+    # Cup) get an id; cups / continental comps we don't ingest stay info-only.
+    league_api_id: int | None = None
+    emblem: str | None = None
+
+
 @router.get("/search", response_model=list[TeamSearchResult])
 async def search_teams(
     q: str = Query(min_length=2, max_length=60),
@@ -222,6 +231,44 @@ async def get_recent_by_api_id(
         )
     except httpx.HTTPError as e:
         raise HTTPException(status_code=502, detail=f"Data provider error: {e}")
+
+
+@router.get("/api/{api_id}/competitions", response_model=list[TeamCompetition])
+async def get_team_competitions(api_id: int, db: Session = Depends(get_db)):
+    """Competitions the team is currently active in, derived from its recent +
+    upcoming matches. The domestic league (and World Cup) come first and are
+    clickable; cups / continental comps we don't model are info-only chips."""
+    team = db.query(Team).filter(Team.api_id == api_id).first()
+
+    out: list[TeamCompetition] = []
+    seen: set[str] = set()
+
+    # Domestic / home competition from the DB — guaranteed and clickable even if
+    # the recent-match window happens to be all continental games.
+    if team:
+        league = db.query(League).filter(League.id == team.league_id).first()
+        if league and league.api_id in FD_LEAGUES:
+            out.append(TeamCompetition(
+                name=league.name, league_api_id=league.api_id, emblem=league.logo_url,
+            ))
+            seen.add(_fold(league.name))
+
+    # Everything else the team has been/will be playing (Champions League, cups,
+    # friendlies, qualifiers…) as info-only chips.
+    try:
+        payload = await _recent_payload(
+            api_id, 15, True, _league_hint(db, api_id), team.name if team else None,
+        )
+    except httpx.HTTPError:
+        payload = {"matches": [], "upcoming": []}
+
+    for m in list(payload.get("matches", [])) + list(payload.get("upcoming", [])):
+        name = m.get("competition")
+        if name and _fold(name) not in seen:
+            seen.add(_fold(name))
+            out.append(TeamCompetition(name=name, emblem=m.get("competition_emblem")))
+
+    return out
 
 
 @router.get("/league/{league_id}", response_model=list[TeamOut])

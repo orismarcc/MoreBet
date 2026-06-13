@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowLeft, ChevronRight, Flag, Search, Shield, Users } from 'lucide-react'
-import type { Team, TeamSearchResult } from '../types'
+import type { Team, TeamSearchResult, TeamCompetition } from '../types'
 import { teamsApi } from '../lib/api'
 import TeamFormPanel from '../components/TeamFormPanel'
 import Spinner from '../components/Spinner'
@@ -11,6 +11,12 @@ const SUGGESTIONS = ['Brazil', 'Mexico', 'Real Madrid', 'Bayern', 'Cruzeiro', 'A
 
 interface ExplorerProps {
   onAnalyse?: (home: Team, away: Team) => void
+  /** Pre-open this team's profile (e.g. clicked from a standings table). */
+  initialTeam?: TeamSearchResult | null
+  /** Called once the initialTeam has been consumed (so it won't re-open). */
+  onConsumed?: () => void
+  /** Open a league's standings/fixtures (from a competition chip). */
+  onOpenLeague?: (leagueApiId: number) => void
 }
 
 function StatBox({ label, value, tip }: { label: string; value: string; tip: string }) {
@@ -30,14 +36,24 @@ function KindBadge({ kind }: { kind: 'club' | 'national' }) {
     : <span className="badge-yellow"><Flag size={11} /> Seleção</span>
 }
 
-export default function TeamExplorer({ onAnalyse }: ExplorerProps) {
+export default function TeamExplorer({ onAnalyse, initialTeam, onConsumed, onOpenLeague }: ExplorerProps) {
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<TeamSearchResult[]>([])
   const [searching, setSearching] = useState(false)
   const [searched, setSearched] = useState(false)
   const [selected, setSelected] = useState<TeamSearchResult | null>(null)
   const [clubStats, setClubStats] = useState<Team | null>(null)
+  const [comps, setComps] = useState<TeamCompetition[]>([])
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+
+  // Open a team handed in from elsewhere (e.g. a standings row click).
+  useEffect(() => {
+    if (initialTeam) {
+      setSelected(initialTeam)
+      onConsumed?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialTeam])
 
   // Busca com debounce
   useEffect(() => {
@@ -63,6 +79,14 @@ export default function TeamExplorer({ onAnalyse }: ExplorerProps) {
     setClubStats(null)
     if (selected?.db_id) {
       teamsApi.get(selected.db_id).then(setClubStats).catch(() => setClubStats(null))
+    }
+  }, [selected])
+
+  // Competições em que o time está ativo (liga nacional clicável + copas/CL)
+  useEffect(() => {
+    setComps([])
+    if (selected) {
+      teamsApi.competitions(selected.api_id).then(setComps).catch(() => setComps([]))
     }
   }, [selected])
 
@@ -94,7 +118,33 @@ export default function TeamExplorer({ onAnalyse }: ExplorerProps) {
           <div className="min-w-0 flex-1">
             <h2 className="text-lg sm:text-xl font-bold text-white truncate">{selected.name}</h2>
             <p className="text-xs sm:text-sm text-surface-400 truncate">{selected.context}</p>
-            <div className="mt-1.5"><KindBadge kind={selected.kind} /></div>
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              <KindBadge kind={selected.kind} />
+              {comps.map(c =>
+                c.league_api_id != null && onOpenLeague ? (
+                  <button
+                    key={c.name}
+                    onClick={() => onOpenLeague(c.league_api_id!)}
+                    title={`Abrir ${c.name}`}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium
+                               bg-brand-500/15 border border-brand-500/40 text-brand-200
+                               hover:bg-brand-500/25 transition-colors"
+                  >
+                    {c.emblem && <img src={c.emblem} alt="" className="w-3 h-3 object-contain" />}
+                    {c.name}
+                  </button>
+                ) : (
+                  <span
+                    key={c.name}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium
+                               bg-surface-700 border border-surface-600 text-surface-300"
+                  >
+                    {c.emblem && <img src={c.emblem} alt="" className="w-3 h-3 object-contain" />}
+                    {c.name}
+                  </span>
+                )
+              )}
+            </div>
           </div>
         </div>
 

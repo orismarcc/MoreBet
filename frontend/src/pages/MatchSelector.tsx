@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 import { RefreshCw, Clock, CheckCircle2 } from 'lucide-react'
-import type { League, Team } from '../types'
+import type { League, Team, StandingRow, TeamSearchResult } from '../types'
 import { leaguesApi } from '../lib/api'
 import { useToast } from '../lib/toast'
 import Spinner from '../components/Spinner'
@@ -24,9 +24,11 @@ function relativeAge(iso: string | null): { label: string; stale: boolean } {
 interface Props {
   /** Open the analysis for a chosen matchup (defaults: no absences, 40% xG). */
   onAnalyse: (homeTeam: Team, awayTeam: Team) => void
+  /** Open a team's full profile (from a standings row click). */
+  onOpenTeam?: (team: TeamSearchResult) => void
 }
 
-export default function MatchSelector({ onAnalyse }: Props) {
+export default function MatchSelector({ onAnalyse, onOpenTeam }: Props) {
   const [leagues, setLeagues] = useState<League[]>([])
   const [selectedLeague, setSelectedLeague] = useState<League | null>(null)
   const [refreshing, setRefreshing] = useState(false)
@@ -50,6 +52,20 @@ export default function MatchSelector({ onAnalyse }: Props) {
   function selectLeague(l: League) {
     setSelectedLeague(l)
     localStorage.setItem(LEAGUE_STORAGE_KEY, String(l.api_id))
+  }
+
+  // Standings row → team profile (same data as a search), via the Times page.
+  function openTeamFromStanding(row: StandingRow) {
+    if (!onOpenTeam || !selectedLeague || row.team_api_id == null) return
+    onOpenTeam({
+      kind: selectedLeague.api_id === 1 ? 'national' : 'club',
+      db_id: row.db_id,
+      api_id: row.team_api_id,
+      name: row.team_name ?? '',
+      short_name: null,
+      crest: row.team_crest,
+      context: `${selectedLeague.name} · ${selectedLeague.country}`,
+    })
   }
 
   async function handleRefresh() {
@@ -217,7 +233,11 @@ export default function MatchSelector({ onAnalyse }: Props) {
       {/* Classificação + próximos jogos da liga escolhida */}
       {selectedLeague && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-5 items-start">
-          <LeagueStandings key={`st-${selectedLeague.id}`} leagueApiId={selectedLeague.api_id} />
+          <LeagueStandings
+            key={`st-${selectedLeague.id}`}
+            leagueApiId={selectedLeague.api_id}
+            onTeamClick={openTeamFromStanding}
+          />
           <LeagueFixtures
             key={`fx-${selectedLeague.id}`}
             leagueApiId={selectedLeague.api_id}

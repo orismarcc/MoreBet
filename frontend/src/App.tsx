@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { CalendarDays, LogOut, Search, TrendingUp, Users } from 'lucide-react'
-import type { MatchAnalysis, Team, AbsentPlayer } from './types'
+import type { MatchAnalysis, Team, AbsentPlayer, TeamSearchResult } from './types'
 import { matchesApi } from './lib/api'
 import { useToast } from './lib/toast'
 import MatchSelector from './pages/MatchSelector'
@@ -50,6 +50,8 @@ export default function App() {
   })
   const [view, setView] = useState<View>('selector')
   const [analysis, setAnalysis] = useState<MatchAnalysis | null>(null)
+  // A team to open on the Times page (set when a standings row is clicked).
+  const [teamToOpen, setTeamToOpen] = useState<TeamSearchResult | null>(null)
 
   if (!token) return <Login onLogin={login} />
 
@@ -57,6 +59,20 @@ export default function App() {
     setPage(p)
     localStorage.setItem('morebet_page', p)
     if (p !== 'analyse') setView('selector')
+  }
+
+  // Open a team's full profile on the Times page (from a standings click).
+  function openTeam(team: TeamSearchResult) {
+    setTeamToOpen(team)
+    navigate('teams')
+  }
+
+  // Jump to a league's standings/fixtures on the Análise page (from a
+  // competition chip on a team profile).
+  function openLeague(apiId: number) {
+    localStorage.setItem('morebet_league_api', String(apiId))
+    setView('selector')
+    navigate('analyse')
   }
 
   // Chamado de fixtures/standings/times com apenas mandante+visitante
@@ -159,7 +175,7 @@ export default function App() {
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.22 }}
             >
-              <MatchSelector onAnalyse={handleQuickAnalyse} />
+              <MatchSelector onAnalyse={handleQuickAnalyse} onOpenTeam={openTeam} />
             </motion.div>
           )}
 
@@ -199,7 +215,12 @@ export default function App() {
               exit={{ opacity: 0, y: -8 }}
               transition={{ duration: 0.22 }}
             >
-              <TeamExplorer onAnalyse={handleQuickAnalyse} />
+              <TeamExplorer
+                onAnalyse={handleQuickAnalyse}
+                initialTeam={teamToOpen}
+                onConsumed={() => setTeamToOpen(null)}
+                onOpenLeague={openLeague}
+              />
             </motion.div>
           )}
         </AnimatePresence>

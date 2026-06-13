@@ -211,6 +211,12 @@ export interface TeamSearchResult {
   context: string
 }
 
+export interface TeamCompetition {
+  name: string
+  league_api_id: number | null  // set => clickable (opens that league)
+  emblem: string | null
+}
+
 export interface AbsentPlayer {
   player_id: number
   goal_contribution_pct: number

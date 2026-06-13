@@ -17,6 +17,7 @@ from app.services.recommender import ValidatedRecommendation, RecommendationRepo
 from app.api.routes.leagues import BacktestOut, CalibrationBucketOut, StandingRow, StandingGroup
 from app.api.routes.teams import (
     RecentMatch, RecentSummary, RecentForm, UpcomingTeamMatch, TeamSearchResult,
+    TeamCompetition,
 )
 from app.api.routes.matches import H2HMatch, GoalEvent, StatLabel, MatchDetails
 from app.api.routes.fixtures import UpcomingFixture as FixtureModel
@@ -46,6 +47,7 @@ PAIRS = [
     (StandingGroup, "StandingGroup", _IDX), (RecentMatch, "RecentMatch", _IDX),
     (RecentSummary, "RecentSummary", _IDX), (RecentForm, "RecentForm", _IDX),
     (UpcomingTeamMatch, "UpcomingTeamMatch", _IDX), (TeamSearchResult, "TeamSearchResult", _IDX),
+    (TeamCompetition, "TeamCompetition", _IDX),
     (H2HMatch, "H2HMatch", _IDX), (GoalEvent, "GoalEvent", _IDX),
     (StatLabel, "StatLabel", _IDX), (MatchDetails, "MatchDetails", _IDX),
     (FixtureModel, "UpcomingFixture", _FIX),
