@@ -90,3 +90,45 @@ def compute_ratings(
         {key: TeamRating(atk[key], dfn[key], len(opponents[key])) for key in keys},
         mu,
     )
+
+
+def team_split_inputs(rating: TeamRating, mu_home: float, mu_away: float) -> dict:
+    """Map an opponent-adjusted rating to the home/away split goal inputs the
+    engine expects, carrying home advantage via the league's home/away means.
+
+    With these on the team row and league averages set to (mu_home, mu_away),
+    the engine reproduces the rating lambdas exactly:
+        λ_home = atk_home · def_away · mu_home
+        λ_away = atk_away · def_home · mu_away
+    (verified against the engine's split normalisation). Venue advantage lives
+    in mu_home vs mu_away; opponent strength lives in the rating.
+    """
+    return {
+        "home_goals_scored": rating.attack * mu_home,
+        "home_goals_conceded": rating.defense * mu_away,
+        "away_goals_scored": rating.attack * mu_away,
+        "away_goals_conceded": rating.defense * mu_home,
+    }
+
+
+def seed_from_matches(
+    matches: list[tuple[object, object, int, int]],
+    k: float = 8.0,
+) -> tuple[dict[object, TeamRating], float, float]:
+    """Opponent-adjusted ratings for a round-robin league plus its home/away
+    goal means. `matches` = (home_key, away_key, home_goals, away_goals), each
+    real match once. Returns (ratings, mu_home, mu_away). Empty → ({}, 0, 0).
+
+    k defaults to 8 (vs 0.5 for tournaments): a domestic field is far more
+    homogeneous and the recent-form signal is noisier, so a heavier prior toward
+    the league mean calibrates best (matches the validated backtest sweep).
+    """
+    if not matches:
+        return {}, 0.0, 0.0
+    ratings, _mu = compute_ratings(
+        [(h, a, hg, ag) for h, a, hg, ag in matches], k=k
+    )
+    n = len(matches)
+    mu_home = sum(hg for _h, _a, hg, _ag in matches) / n
+    mu_away = sum(ag for _h, _a, _hg, ag in matches) / n
+    return ratings, mu_home, mu_away

@@ -145,13 +145,10 @@ def _run_analysis(payload: CalculateMatchIn, db: Session):
     home_modifier = _player_modifier(payload.absent_home)
     away_modifier = _player_modifier(payload.absent_away)
 
-    # Tournament rows are already opponent-adjusted AND self-regularised by the
-    # rating prior; re-shrinking them toward the (bimodal) field mean would undo
-    # the very correction that makes Spain ≫ Cape Verde. Skip shrinkage there.
-    is_tournament = league.api_id in TOURNAMENT_LEAGUES
-    home_played = None if is_tournament else home_team.home_played
-    away_played = None if is_tournament else away_team.away_played
-
+    # Every league (domestic AND tournament) is now seeded via opponent-adjusted
+    # ratings that are already self-regularised by the rating's K-game prior.
+    # Post-hoc shrinkage toward the field mean would double-regularise and undo
+    # the correction, so it's disabled here (home_played=None ⇒ engine skips it).
     team_input = TeamInput(
         home_goals_scored_avg=home_team.home_goals_scored,
         home_goals_conceded_avg=home_team.home_goals_conceded,
@@ -163,8 +160,8 @@ def _run_analysis(payload: CalculateMatchIn, db: Session):
         away_xg_conceded_avg=away_team.away_xg_conceded,
         home_player_modifier=home_modifier,
         away_player_modifier=away_modifier,
-        home_played=home_played,
-        away_played=away_played,
+        home_played=None,
+        away_played=None,
     )
 
     league_avgs = LeagueAverages(

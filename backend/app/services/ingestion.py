@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from app.models.orm import League, Team, Match, Player
 from app.services.football_data import (
     SUPPORTED_LEAGUES,
-    TOURNAMENT_LEAGUES,
     fetch_league_with_form,
 )
 
@@ -72,24 +71,24 @@ async def ingest_league(db: Session, league_id: int) -> League:
 
 
 def _update_league_averages(league: League, teams_data: list[dict]) -> None:
-    """Recalculate MGM/MGV from team home/away averages.
-
-    Tournaments are seeded via opponent-adjusted ratings whose league average
-    (mu) is provided directly in league_data — recomputing it from the rows
-    would break the engine normalisation (λ = atk·def·mu requires the split
-    averages to equal mu, not the participant-row mean). Leave it intact."""
-    if league.api_id in TOURNAMENT_LEAGUES:
+    """Both domestic and tournament leagues are now seeded via opponent-adjusted
+    ratings whose league average (mu_home/mu_away) is provided directly in
+    league_data. Recomputing it from the team rows would break the engine
+    normalisation — λ = atk·def·mu requires the split averages to equal those
+    means, not the participant-row mean — so the seeded averages are left
+    intact. This function is retained only as a defensive fallback for league
+    data that somehow arrived without averages set."""
+    if league.home_goals_avg and league.away_goals_avg:
         return
 
     home_goals = [t["home_goals_scored"] for t in teams_data if t["home_played"] > 0]
     away_goals = [t["away_goals_scored"] for t in teams_data if t["away_played"] > 0]
-
     if home_goals:
         league.home_goals_avg = sum(home_goals) / len(home_goals)
     if away_goals:
         league.away_goals_avg = sum(away_goals) / len(away_goals)
-
-    league.total_matches = sum(t["home_played"] for t in teams_data)
+    if not league.total_matches:
+        league.total_matches = sum(t["home_played"] for t in teams_data)
 
 
 async def ingest_all_leagues(db: Session) -> list[str]:

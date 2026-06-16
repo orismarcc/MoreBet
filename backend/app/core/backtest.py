@@ -22,6 +22,7 @@ import math
 from dataclasses import dataclass, field
 
 from app.core.engine import TeamInput, analyse_match
+from app.core.ratings import seed_from_matches, team_split_inputs
 from app.core.strength import LeagueAverages
 from app.services.football_data import _team_form_averages
 
@@ -96,6 +97,9 @@ def run_backtest(matches: list[dict]) -> BacktestResult:
     predictions: list[_Prediction] = []
     baselines: list[tuple[float, float, float, float, float]] = []
     skipped = 0
+    # Match list seen so far (with opponent ids) — the input to the rating
+    # solver. Grown incrementally; mirrors production's seed_from_matches.
+    prior_games: list[tuple[int, int, int, int]] = []
 
     for m in matches:
         home_hist = histories.get(m["home_id"], [])
@@ -109,21 +113,24 @@ def run_backtest(matches: list[dict]) -> BacktestResult:
         ):
             home_avgs = _team_form_averages(home_hist, FORM_WINDOW)
             away_avgs = _team_form_averages(away_hist, FORM_WINDOW)
+            # Same opponent-adjusted ratings the production seeding uses, fit on
+            # only the matches played before this one (no leakage).
+            ratings, mu_home, mu_away = seed_from_matches(prior_games)
+            rh = ratings.get(m["home_id"])
+            ra = ratings.get(m["away_id"])
             if (
                 home_avgs["home_played"] >= MIN_SPLIT_MATCHES
                 and away_avgs["away_played"] >= MIN_SPLIT_MATCHES
+                and rh is not None and ra is not None and mu_home > 0
             ):
-                league = LeagueAverages(
-                    home_goals_avg=sum_home_goals / n_played,
-                    away_goals_avg=sum_away_goals / n_played,
-                )
+                league = LeagueAverages(home_goals_avg=mu_home, away_goals_avg=mu_away)
+                hs = team_split_inputs(rh, mu_home, mu_away)
+                as_ = team_split_inputs(ra, mu_home, mu_away)
                 ti = TeamInput(
-                    home_goals_scored_avg=home_avgs["home_goals_scored"],
-                    home_goals_conceded_avg=home_avgs["home_goals_conceded"],
-                    away_goals_scored_avg=away_avgs["away_goals_scored"],
-                    away_goals_conceded_avg=away_avgs["away_goals_conceded"],
-                    home_played=home_avgs["home_played"],
-                    away_played=away_avgs["away_played"],
+                    home_goals_scored_avg=hs["home_goals_scored"],
+                    home_goals_conceded_avg=hs["home_goals_conceded"],
+                    away_goals_scored_avg=as_["away_goals_scored"],
+                    away_goals_conceded_avg=as_["away_goals_conceded"],
                 )
                 analysis = analyse_match(ti, league)
                 mk = analysis.markets
@@ -158,6 +165,7 @@ def run_backtest(matches: list[dict]) -> BacktestResult:
             {"is_home": True, "scored": gh, "conceded": ga})
         histories.setdefault(m["away_id"], []).append(
             {"is_home": False, "scored": ga, "conceded": gh})
+        prior_games.append((m["home_id"], m["away_id"], gh, ga))
         n_played += 1
         sum_home_goals += gh
         sum_away_goals += ga
