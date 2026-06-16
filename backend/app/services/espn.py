@@ -300,6 +300,7 @@ async def fetch_team_intl_results(
             "competition_emblem": None,
             "is_home": me.get("homeAway") == "home",
             "opponent": (opp.get("team") or {}).get("displayName", ""),
+            "opponent_espn_id": str((opp.get("team") or {}).get("id") or ""),
             "opponent_short": (opp.get("team") or {}).get("abbreviation"),
             "opponent_crest": logos[0].get("href") if logos else None,
             "goals_for": gf,

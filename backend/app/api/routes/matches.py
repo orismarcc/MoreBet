@@ -25,6 +25,7 @@ from app.services import recommender
 from app.services import odds_market
 from app.services.football_data import (
     FD_LEAGUES,
+    TOURNAMENT_LEAGUES,
     fetch_head_to_head,
     fetch_league_finished_matches,
     fetch_team_form,
@@ -144,6 +145,13 @@ def _run_analysis(payload: CalculateMatchIn, db: Session):
     home_modifier = _player_modifier(payload.absent_home)
     away_modifier = _player_modifier(payload.absent_away)
 
+    # Tournament rows are already opponent-adjusted AND self-regularised by the
+    # rating prior; re-shrinking them toward the (bimodal) field mean would undo
+    # the very correction that makes Spain ≫ Cape Verde. Skip shrinkage there.
+    is_tournament = league.api_id in TOURNAMENT_LEAGUES
+    home_played = None if is_tournament else home_team.home_played
+    away_played = None if is_tournament else away_team.away_played
+
     team_input = TeamInput(
         home_goals_scored_avg=home_team.home_goals_scored,
         home_goals_conceded_avg=home_team.home_goals_conceded,
@@ -155,8 +163,8 @@ def _run_analysis(payload: CalculateMatchIn, db: Session):
         away_xg_conceded_avg=away_team.away_xg_conceded,
         home_player_modifier=home_modifier,
         away_player_modifier=away_modifier,
-        home_played=home_team.home_played,
-        away_played=away_team.away_played,
+        home_played=home_played,
+        away_played=away_played,
     )
 
     league_avgs = LeagueAverages(

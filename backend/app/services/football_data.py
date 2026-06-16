@@ -207,15 +207,28 @@ def _team_neutral_averages(matches: list[dict], last_n: int) -> dict:
     }
 
 
+# Internationals pulled per nation for seeding. Deeper than the form window:
+# the rating solver needs a richly-connected opponent graph, and a national
+# team plays sparsely (~10/year), so 20 reaches well into qualifiers.
+_INTL_SEED_DEPTH = 20
+
+
 async def _bootstrap_tournament_from_internationals(
     client: httpx.AsyncClient, league_id: int, name: str, country: str,
     emblem: str | None,
 ) -> tuple[dict, list[dict]] | None:
-    """Pre-tournament seeding: build each participant's neutral-venue scoring
-    averages from their last internationals (friendlies + qualifiers via
-    ESPN), mirrored into both home/away splits. Nations we can't map get the
-    field average. Returns None when nothing could be built."""
+    """Pre-tournament seeding via OPPONENT-ADJUSTED ratings.
+
+    Raw international goal averages misrank nations badly because they ignore
+    strength of schedule (a minnow facing minnows looks defensively elite). We
+    pull each participant's last internationals (with opponent ids) via ESPN,
+    build one big game graph, and solve attack/defence ratings that account for
+    who each team actually played (see app.core.ratings). Each nation's seeded
+    scoring is then its expected goals against an AVERAGE opponent, mirrored
+    into both neutral-venue splits. Nations we can't map get the average (1.0).
+    Returns None when nothing could be built."""
     from app.services import espn as espn_svc
+    from app.core.ratings import compute_ratings
 
     participants = await fetch_wc_participants(client)
     if not participants:
@@ -229,55 +242,73 @@ async def _bootstrap_tournament_from_internationals(
     # collapsed seeding leaves every nation on the field-average default.
     sem = asyncio.Semaphore(4)
 
-    async def _averages(p: dict) -> tuple[dict, tuple[float, float, int] | None]:
+    async def _results(p: dict) -> tuple[dict, str | None, list[dict]]:
         match = next(
             (t for t in espn_teams if espn_svc._teams_match(p["name"], t["name"])),
             None,
         )
         if not match:
-            return p, None
+            return p, None, []
         async with sem:
             try:
-                results = await espn_svc.fetch_team_intl_results(
-                    client, match["espn_id"], limit=12
+                res = await espn_svc.fetch_team_intl_results(
+                    client, match["espn_id"], limit=_INTL_SEED_DEPTH
                 )
             except httpx.HTTPError:
-                return p, None
-        if not results:
-            return p, None
-        n = len(results)
-        gf = sum(r["goals_for"] for r in results) / n
-        ga = sum(r["goals_against"] for r in results) / n
-        return p, (gf, ga, n)
+                return p, None, []
+        return p, match["espn_id"], res
 
-    per_team = await asyncio.gather(*(_averages(p) for p in participants))
-    with_data = [avg for _, avg in per_team if avg is not None]
-    # Partial success still beats the all-default fallback: teams with data get
-    # real strength, the rest get the field average computed from those.
-    if len(with_data) < 8:
+    pulled = await asyncio.gather(*(_results(p) for p in participants))
+    mapped = [(p, eid, res) for p, eid, res in pulled if eid and res]
+    if len(mapped) < 8:
         return None  # genuinely too sparse to be meaningful
-    field_gf = sum(a[0] for a in with_data) / len(with_data)
-    field_ga = sum(a[1] for a in with_data) / len(with_data)
+
+    # Build the game graph keyed by stable ESPN ids, deduped by match id so a
+    # participant-vs-participant game isn't counted from both schedules.
+    games: list[tuple[str, str, int, int]] = []
+    seen_matches: set[int] = set()
+    for _p, eid, res in mapped:
+        for r in res:
+            mid = r.get("match_id") or 0
+            if mid and mid in seen_matches:
+                continue
+            if mid:
+                seen_matches.add(mid)
+            opp = r.get("opponent_espn_id") or f"name:{r['opponent']}"
+            games.append((eid, opp, r["goals_for"], r["goals_against"]))
+
+    ratings, mu = compute_ratings(games)
+    if mu <= 0:
+        return None
 
     teams_list: list[dict] = []
-    for p, avg in per_team:
-        gf, ga, n = avg if avg is not None else (field_gf, field_ga, 0)
+    for p, eid, res in pulled:
+        rating = ratings.get(eid) if eid else None
+        if rating is not None:
+            scored = rating.attack * mu
+            conceded = rating.defense * mu
+            n = len(res)
+        else:
+            # Unmapped nation: average until it has played WC matches.
+            scored = conceded = mu
+            n = 0
         teams_list.append({
             "api_id": p["api_id"],
             "name": p["name"],
             "short_name": p["short_name"],
             "logo_url": p["crest"],
             "home_played": n,
-            "home_goals_scored": gf,
-            "home_goals_conceded": ga,
+            "home_goals_scored": scored,
+            "home_goals_conceded": conceded,
             "away_played": n,
-            "away_goals_scored": gf,
-            "away_goals_conceded": ga,
+            "away_goals_scored": scored,
+            "away_goals_conceded": conceded,
         })
 
     logger.info(
-        "tournament %s seeded from internationals: %d/%d nations with data",
-        name, len(with_data), len(participants),
+        "tournament %s seeded via opponent-adjusted ratings: %d/%d nations "
+        "mapped, %d games, mu=%.3f",
+        name, len(mapped), len(participants), len(games), mu,
     )
     league_dict = {
         "api_id": league_id,
@@ -285,6 +316,11 @@ async def _bootstrap_tournament_from_internationals(
         "country": country,
         "season": date.today().year,
         "logo_url": emblem,
+        # League average IS mu so the engine's normalisation reproduces the
+        # rating lambdas exactly: λ_home = atk_home · def_away · mu.
+        "home_goals_avg": mu,
+        "away_goals_avg": mu,
+        "total_matches": len(games),
     }
     return league_dict, teams_list
 
