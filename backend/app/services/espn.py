@@ -299,6 +299,7 @@ async def fetch_team_intl_results(
             "competition_code": league.get("slug"),  # ESPN slug — modal-ready
             "competition_emblem": None,
             "is_home": me.get("homeAway") == "home",
+            "neutral": bool(comp.get("neutralSite")),
             "opponent": (opp.get("team") or {}).get("displayName", ""),
             "opponent_espn_id": str((opp.get("team") or {}).get("id") or ""),
             "opponent_short": (opp.get("team") or {}).get("abbreviation"),

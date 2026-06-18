@@ -49,6 +49,23 @@ class MatchAnalysis:
     top_scores: list[tuple[int, int, float]]
 
 
+def analyse_from_lambdas(lambda_home: float, lambda_away: float) -> MatchAnalysis:
+    """Assemble a full analysis directly from expected goals — used by the
+    national-team (Elo) path, which produces λ pairwise instead of from
+    multiplicative team strengths."""
+    matrix = ScoreMatrix(lambda_home=lambda_home, lambda_away=lambda_away)
+    markets = calc_markets(matrix)
+    fair_odds = calc_fair_odds(markets)
+    return MatchAnalysis(
+        lambda_home=lambda_home,
+        lambda_away=lambda_away,
+        matrix=matrix,
+        markets=markets,
+        fair_odds=fair_odds,
+        top_scores=matrix.top_scores(10),
+    )
+
+
 def analyse_match(
     home: TeamInput,
     league: LeagueAverages,

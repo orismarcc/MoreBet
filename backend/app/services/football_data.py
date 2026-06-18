@@ -921,6 +921,87 @@ _WC_CACHE_TTL = 6 * 3600.0
 _wc_participants_cache: dict = {"ts": 0.0, "teams": []}
 
 
+_TOURNAMENT_ELO_TTL = 6 * 3600.0
+_tournament_elo_cache: dict[int, tuple[float, dict[int, float]]] = {}
+
+
+async def get_tournament_elo(
+    client: httpx.AsyncClient, league_id: int
+) -> dict[int, float]:
+    """Elo ratings for a tournament's participants, keyed by OUR team api_id.
+
+    National-team goal stats are too noisy and confederation-clustered for the
+    multiplicative goals model (it put Portugal at 23% to beat Morocco). Elo —
+    learned from results over each nation's last internationals — ranks them
+    correctly and is what the analysis path uses for tournament matches.
+    Cached 6h (≈48 nations × ESPN schedule calls)."""
+    import time as _t
+    from app.core.elo import compute_elo
+    from app.services import espn as espn_svc
+
+    hit = _tournament_elo_cache.get(league_id)
+    now = _t.monotonic()
+    if hit and now - hit[0] < _TOURNAMENT_ELO_TTL:
+        return hit[1]
+
+    participants = await fetch_wc_participants(client)
+    espn_teams = await espn_svc.fetch_wc_espn_team_map(client)
+
+    # Map our api_id ↔ ESPN id by name (both lists carry display names).
+    api_to_espn: dict[int, str] = {}
+    for p in participants:
+        m = next(
+            (t for t in espn_teams if espn_svc._teams_match(p["name"], t["name"])),
+            None,
+        )
+        if m:
+            api_to_espn[p["api_id"]] = m["espn_id"]
+
+    sem = asyncio.Semaphore(6)
+
+    async def _pull(espn_id: str) -> tuple[str, list[dict]]:
+        async with sem:
+            try:
+                return espn_id, await espn_svc.fetch_team_intl_results(client, espn_id, 30)
+            except httpx.HTTPError:
+                return espn_id, []
+
+    espn_ids = list(set(api_to_espn.values()))
+    results = await asyncio.gather(*(_pull(eid) for eid in espn_ids))
+
+    # Deduplicate into a chronological match list (each meeting once).
+    seen: dict[int, dict] = {}
+    for self_id, games in results:
+        for g in games:
+            mid = g.get("match_id")
+            oid = g.get("opponent_espn_id") or ""
+            if not mid or not oid or mid in seen:
+                continue
+            if g["is_home"]:
+                seen[mid] = {
+                    "home_id": self_id, "away_id": oid,
+                    "home_goals": g["goals_for"], "away_goals": g["goals_against"],
+                    "neutral": g.get("neutral", False), "date": g["date"],
+                }
+            else:
+                seen[mid] = {
+                    "home_id": oid, "away_id": self_id,
+                    "home_goals": g["goals_against"], "away_goals": g["goals_for"],
+                    "neutral": g.get("neutral", False), "date": g["date"],
+                }
+    matches = sorted(seen.values(), key=lambda m: m["date"])
+    elo_by_espn = compute_elo(matches)
+
+    elo_by_api = {
+        api_id: elo_by_espn[espn_id]
+        for api_id, espn_id in api_to_espn.items()
+        if espn_id in elo_by_espn
+    }
+    if elo_by_api:
+        _tournament_elo_cache[league_id] = (now, elo_by_api)
+    return elo_by_api
+
+
 async def fetch_wc_participants(client: httpx.AsyncClient) -> list[dict]:
     """All national teams drawn into the current World Cup edition.
     Returns [{api_id, name, short_name, crest}], cached for 6h."""

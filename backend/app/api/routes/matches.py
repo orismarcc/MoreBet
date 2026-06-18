@@ -119,7 +119,26 @@ def _player_modifier(absent_players: list, team_total_contribution: float = 1.0)
     return max(1.0 - total_impact, 0.50)
 
 
-def _run_analysis(payload: CalculateMatchIn, db: Session):
+async def _tournament_elo_analysis(home_team: Team, away_team: Team, league: League):
+    """National-team match via Elo (neutral venue). Returns a MatchAnalysis or
+    None if Elo for either side isn't available (caller falls back to goals)."""
+    from app.core.elo import elo_to_lambdas
+    from app.core.engine import analyse_from_lambdas
+    from app.services.football_data import get_tournament_elo
+
+    try:
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            elo = await get_tournament_elo(client, league.api_id)
+    except httpx.HTTPError:
+        return None
+    eh, ea = elo.get(home_team.api_id), elo.get(away_team.api_id)
+    if eh is None or ea is None:
+        return None
+    lam_h, lam_a = elo_to_lambdas(eh, ea, neutral=True)
+    return analyse_from_lambdas(lam_h, lam_a)
+
+
+async def _run_analysis(payload: CalculateMatchIn, db: Session):
     """Shared by /calculate and /recommend: validates teams/league and runs
     the full model pipeline. Returns (result, home_team, away_team, league,
     home_modifier, away_modifier)."""
@@ -145,10 +164,17 @@ def _run_analysis(payload: CalculateMatchIn, db: Session):
     home_modifier = _player_modifier(payload.absent_home)
     away_modifier = _player_modifier(payload.absent_away)
 
-    # Every league (domestic AND tournament) is now seeded via opponent-adjusted
-    # ratings that are already self-regularised by the rating's K-game prior.
-    # Post-hoc shrinkage toward the field mean would double-regularise and undo
-    # the correction, so it's disabled here (home_played=None ⇒ engine skips it).
+    # National teams (tournaments): goal stats are too noisy and confederation-
+    # clustered for the multiplicative model, so use Elo (results-based) instead.
+    if league.api_id in TOURNAMENT_LEAGUES:
+        elo_result = await _tournament_elo_analysis(home_team, away_team, league)
+        if elo_result is not None:
+            return elo_result, home_team, away_team, league, home_modifier, away_modifier
+        # else fall through to the goal-based seeding already on the team rows
+
+    # Domestic leagues are seeded via opponent-adjusted ratings already self-
+    # regularised by the rating's K-game prior; post-hoc shrinkage would double-
+    # regularise (home_played=None ⇒ engine skips it).
     team_input = TeamInput(
         home_goals_scored_avg=home_team.home_goals_scored,
         home_goals_conceded_avg=home_team.home_goals_conceded,
@@ -176,9 +202,9 @@ def _run_analysis(payload: CalculateMatchIn, db: Session):
 
 
 @router.post("/calculate", response_model=MatchAnalysisOut)
-def calculate_match(payload: CalculateMatchIn, db: Session = Depends(get_db)):
+async def calculate_match(payload: CalculateMatchIn, db: Session = Depends(get_db)):
     result, home_team, away_team, _league, home_modifier, away_modifier = \
-        _run_analysis(payload, db)
+        await _run_analysis(payload, db)
 
     top_scores = [
         ScoreProb(home=h, away=a, prob=round(p, 6))
@@ -246,7 +272,7 @@ async def recommend_match(payload: CalculateMatchIn, db: Session = Depends(get_d
             detail="Agente não configurado — defina ANTHROPIC_API_KEY no servidor.",
         )
 
-    result, home_team, away_team, league, home_mod, away_mod = _run_analysis(payload, db)
+    result, home_team, away_team, league, home_mod, away_mod = await _run_analysis(payload, db)
 
     markets = {k: round(v, 4) for k, v in result.markets.__dict__.items()}
     hint = FD_LEAGUES[league.api_id][0] if league.api_id in FD_LEAGUES else None
